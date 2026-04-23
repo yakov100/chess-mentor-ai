@@ -1,0 +1,135 @@
+@import "tailwindcss";
+
+/* ─── Design tokens ──────────────────────────────────────────── */
+@theme {
+  --font-sans: "Rubik", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Pastel palette — light mode */
+  --color-surface:        #f5f7fa;
+  --color-surface-card:   #ffffff;
+  --color-border:         #e2e8f0;
+  --color-text:           #1a202c;
+  --color-text-muted:     #64748b;
+
+  /* Pastels */
+  --color-blue:           #bfdbfe;   /* blue-200 */
+  --color-blue-mid:       #60a5fa;   /* blue-400 */
+  --color-blue-deep:      #2563eb;   /* blue-600 */
+  --color-mint:           #a7f3d0;   /* emerald-200 */
+  --color-mint-mid:       #34d399;   /* emerald-400 */
+  --color-mint-deep:      #059669;   /* emerald-600 */
+  --color-peach:          #fed7aa;   /* orange-200 */
+  --color-peach-mid:      #fb923c;   /* orange-400 */
+  --color-peach-deep:     #ea580c;   /* orange-600 */
+}
+
+/* ─── Dark mode overrides ──────────────────────────────────────── */
+.dark {
+  --color-surface:        #0f1117;
+  --color-surface-card:   #1a1d27;
+  --color-border:         #2d3148;
+  --color-text:           #e2e8f0;
+  --color-text-muted:     #94a3b8;
+
+  /* Pastels dimmed in dark */
+  --color-blue:           #1e3a5f;
+  --color-blue-mid:       #3b82f6;
+  --color-blue-deep:      #60a5fa;
+  --color-mint:           #064e3b;
+  --color-mint-mid:       #10b981;
+  --color-mint-deep:      #34d399;
+  --color-peach:          #431407;
+  --color-peach-mid:      #f97316;
+  --color-peach-deep:     #fb923c;
+}
+
+/* ─── Base ─────────────────────────────────────────────────────── */
+@layer base {
+  html {
+    direction: rtl;
+  }
+
+  body {
+    background-color: var(--color-surface);
+    color: var(--color-text);
+    font-family: var(--font-sans);
+    @apply antialiased;
+  }
+
+  * {
+    border-color: var(--color-border);
+    transition-property: background-color, border-color, color;
+    transition-duration: 200ms;
+  }
+}
+
+/* ─── Scrollbar ──────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
+
+/* ─── Chess board ─────────────────────────────────────────────── */
+.chess-board-container {
+  aspect-ratio: 1 / 1;
+  width: 100%;
+  max-width: 560px;
+}
+
+/* ─── Resizable panel handle ─────────────────────────────────── */
+[data-panel-resize-handle-id] {
+  width: 4px;
+  background: var(--color-border);
+  cursor: col-resize;
+  transition: background 150ms;
+  border-radius: 4px;
+}
+[data-panel-resize-handle-id]:hover,
+[data-panel-resize-handle-id][data-resize-handle-active] {
+  background: var(--color-blue-mid);
+}
+
+/* ─── Utility helpers ─────────────────────────────────────────── */
+.card {
+  background-color: var(--color-surface-card);
+  border: 1px solid var(--color-border);
+  border-radius: 1rem;
+}
+.card-peach {
+  background-color: var(--color-peach);
+  border: 1px solid var(--color-border);
+  border-radius: 1rem;
+}
+.card-mint {
+  background-color: var(--color-mint);
+  border: 1px solid var(--color-border);
+  border-radius: 1rem;
+}
+.card-blue {
+  background-color: var(--color-blue);
+  border: 1px solid var(--color-border);
+  border-radius: 1rem;
+}
+
+/* FAB chat bubble */
+.mentor-bubble-fab {
+  background: linear-gradient(135deg, var(--color-blue-deep), var(--color-mint-mid));
+  box-shadow: 0 8px 24px rgba(37, 99, 235, 0.25);
+}
+
+/* Mentor chat panel */
+.mentor-chat-panel {
+  background-color: var(--color-surface-card);
+  border: 1px solid var(--color-border);
+  border-radius: 1.25rem;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+}

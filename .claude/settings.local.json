@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -n \"console.error\\\\|console.log\\\\|console.warn\" /c/Users/User/Downloads/chess-mentor-ai/src/App.tsx /c/Users/User/Downloads/chess-mentor-ai/src/lib/*.ts)",
+      "Bash(npm list 2>/dev/null | head -40)",
+      "Bash(grep -n \"export\" /c/Users/User/Downloads/chess-mentor-ai/src/lib/*.ts)",
+      "Bash(cd \"C:\\\\Users\\\\User\\\\Downloads\\\\chess-mentor-ai\" && npm run lint 2>&1)",
+      "Bash(cd \"C:\\\\Users\\\\User\\\\Downloads\\\\chess-mentor-ai\" && npm run build 2>&1)",
+      "Bash(start http://localhost:3000)",
+      "Bash(cd \"C:/Users/User/Downloads/chess-mentor-ai\" && node scripts/copy-stockfish.mjs)",
+      "Bash(cd \"C:/Users/User/Downloads/chess-mentor-ai\" && npm run lint 2>&1)"
+    ]
+  }
+}

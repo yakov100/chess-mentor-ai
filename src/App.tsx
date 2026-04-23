@@ -1,0 +1,661 @@
+import React, { useState, useCallback, useRef, useEffect } from 'react';
+import { Chessboard } from 'react-chessboard';
+import { Chess } from 'chess.js';
+import {
+  RotateCcw,
+  FlipVertical2,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  Trash2,
+  Copy,
+  ClipboardPaste,
+  Sun,
+  Moon,
+  FileText,
+  Check,
+} from 'lucide-react';
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+interface HistoryEntry {
+  fen: string;
+  san: string;
+  moveNumber: number;
+  color: 'w' | 'b';
+  from: string;
+  to: string;
+}
+
+type SquareStyles = Record<string, React.CSSProperties>;
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const INITIAL_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+
+const PIECE_VALUES: Record<string, number> = {
+  p: 1, n: 3, b: 3, r: 5, q: 9, k: 0,
+};
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+// whiteCaptured = black pieces that white has taken (shown next to white)
+// blackCaptured = white pieces that black has taken (shown next to black)
+function getCapturedPieces(fen: string): { whiteCaptured: string[]; blackCaptured: string[] } {
+  const START: Record<string, number> = { p: 8, n: 2, b: 2, r: 2, q: 1 };
+  const onBoard: Record<string, number> = {};
+  for (const ch of fen.split(' ')[0]) {
+    if (/[pnbrqPNBRQ]/.test(ch)) {
+      onBoard[ch] = (onBoard[ch] || 0) + 1;
+    }
+  }
+  const whiteCaptured: string[] = []; // black pieces taken by white
+  const blackCaptured: string[] = []; // white pieces taken by black
+  for (const [p, start] of Object.entries(START)) {
+    const blackMissing = start - (onBoard[p] || 0);
+    const whiteMissing = start - (onBoard[p.toUpperCase()] || 0);
+    for (let i = 0; i < blackMissing; i++) whiteCaptured.push(p);
+    for (let i = 0; i < whiteMissing; i++) blackCaptured.push(p.toUpperCase());
+  }
+  return { whiteCaptured, blackCaptured };
+}
+
+function getMaterialBalance(fen: string): number {
+  const piecePart = fen.split(' ')[0];
+  let balance = 0;
+  for (const ch of piecePart) {
+    if (/[PNBRQ]/.test(ch)) balance += PIECE_VALUES[ch.toLowerCase()];
+    else if (/[pnbrq]/.test(ch)) balance -= PIECE_VALUES[ch];
+  }
+  return balance;
+}
+
+function formatMoveList(
+  history: HistoryEntry[],
+): Array<{ number: number; white?: HistoryEntry & { idx: number }; black?: HistoryEntry & { idx: number } }> {
+  const pairs: Array<{
+    number: number;
+    white?: HistoryEntry & { idx: number };
+    black?: HistoryEntry & { idx: number };
+  }> = [];
+
+  history.forEach((entry, idx) => {
+    if (entry.color === 'w') {
+      pairs.push({ number: entry.moveNumber, white: { ...entry, idx } });
+    } else {
+      const last = pairs[pairs.length - 1];
+      if (last && last.black === undefined) {
+        last.black = { ...entry, idx };
+      } else {
+        pairs.push({ number: entry.moveNumber, black: { ...entry, idx } });
+      }
+    }
+  });
+
+  return pairs;
+}
+
+function buildPgn(history: HistoryEntry[], startFen: string): string {
+  let pgn = '';
+  if (startFen !== INITIAL_FEN) pgn += `[FEN "${startFen}"]\n\n`;
+  history.forEach((entry, i) => {
+    if (entry.color === 'w') pgn += `${entry.moveNumber}. `;
+    pgn += entry.san + ' ';
+    if (i === history.length - 1) {
+      const game = new Chess(entry.fen);
+      if (game.isCheckmate()) pgn += game.turn() === 'w' ? '0-1' : '1-0';
+      else if (game.isDraw()) pgn += '1/2-1/2';
+    }
+  });
+  return pgn.trim();
+}
+
+const PIECE_SYMBOLS: Record<string, string> = {
+  P: '♙', N: '♘', B: '♗', R: '♖', Q: '♕',
+  p: '♟', n: '♞', b: '♝', r: '♜', q: '♛',
+};
+
+// ─── App ─────────────────────────────────────────────────────────────────────
+
+export default function App() {
+  const [dark, setDark] = useState(false);
+  const [boardFlipped, setBoardFlipped] = useState(false);
+
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [currentIndex, setCurrentIndex] = useState(-1);
+  const [startFen, setStartFen] = useState(INITIAL_FEN);
+  const [currentFen, setCurrentFen] = useState(INITIAL_FEN);
+
+  const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
+  const [legalMoveSquares, setLegalMoveSquares] = useState<SquareStyles>({});
+  const [highlightSquares, setHighlightSquares] = useState<SquareStyles>({});
+
+  const [fenInput, setFenInput] = useState('');
+  const [fenError, setFenError] = useState('');
+  const [copied, setCopied] = useState<'fen' | 'pgn' | null>(null);
+
+  const moveListRef = useRef<HTMLDivElement>(null);
+
+  // ── Sync dark mode ────────────────────────────────────────────────────────
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', dark);
+  }, [dark]);
+
+  // ── Auto-scroll move list ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (moveListRef.current) {
+      const active = moveListRef.current.querySelector('[data-active="true"]');
+      active?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }, [currentIndex]);
+
+  // ── Navigate to a history index ───────────────────────────────────────────
+  // Defined FIRST so keyboard handler can reference it safely
+  const goTo = useCallback(
+    (index: number, hist: HistoryEntry[] = history) => {
+      const clamped = Math.max(-1, Math.min(hist.length - 1, index));
+      setCurrentIndex(clamped);
+      setSelectedSquare(null);
+      setLegalMoveSquares({});
+      if (clamped === -1) {
+        setCurrentFen(startFen);
+        setHighlightSquares({});
+      } else {
+        const entry = hist[clamped];
+        setCurrentFen(entry.fen);
+        setHighlightSquares({
+          [entry.from]: { backgroundColor: 'rgba(255, 214, 0, 0.45)' },
+          [entry.to]: { backgroundColor: 'rgba(255, 214, 0, 0.45)' },
+        });
+      }
+    },
+    [history, startFen],
+  );
+
+  // ── Keyboard navigation ───────────────────────────────────────────────────
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key === 'ArrowLeft') goTo(currentIndex - 1);
+      else if (e.key === 'ArrowRight') goTo(currentIndex + 1);
+      else if (e.key === 'Home') goTo(-1);
+      else if (e.key === 'End') goTo(history.length - 1);
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [goTo, currentIndex, history.length]);
+
+  // ── Internal: apply a chess.js Move and update state ─────────────────────
+  const applyMove = useCallback(
+    (game: Chess, from: string, to: string) => {
+      const pieceType = game.get(from as Parameters<typeof game.get>[0])?.type ?? '';
+      const isPromotion =
+        pieceType === 'p' &&
+        ((game.turn() === 'w' && to[1] === '8') || (game.turn() === 'b' && to[1] === '1'));
+
+      const move = game.move({ from, to, promotion: isPromotion ? 'q' : undefined });
+      if (!move) return false;
+
+      const newEntry: HistoryEntry = {
+        fen: game.fen(),
+        san: move.san,
+        moveNumber: move.color === 'w' ? game.moveNumber() - 1 : game.moveNumber() - 1,
+        color: move.color as 'w' | 'b',
+        from: move.from,
+        to: move.to,
+      };
+
+      // Fix move number: after white moves, fullMoveNumber incremented for black's turn,
+      // we want the move number at time of move
+      const chess2 = new Chess(currentFen);
+      newEntry.moveNumber = chess2.moveNumber();
+
+      const newHistory = [...history.slice(0, currentIndex + 1), newEntry];
+      setHistory(newHistory);
+      setSelectedSquare(null);
+      setLegalMoveSquares({});
+      setHighlightSquares({
+        [move.from]: { backgroundColor: 'rgba(255, 214, 0, 0.45)' },
+        [move.to]: { backgroundColor: 'rgba(255, 214, 0, 0.45)' },
+      });
+      goTo(newHistory.length - 1, newHistory);
+      return true;
+    },
+    [currentFen, currentIndex, history, goTo],
+  );
+
+  // ── Drag-and-drop handler ─────────────────────────────────────────────────
+  const onDrop = useCallback(
+    ({ sourceSquare, targetSquare }: { sourceSquare: string; targetSquare: string | null; piece: { pieceType: string } }): boolean => {
+      if (!targetSquare) return false;
+      const game = new Chess(currentFen);
+      return applyMove(game, sourceSquare, targetSquare);
+    },
+    [currentFen, applyMove],
+  );
+
+  // ── Click-to-move ─────────────────────────────────────────────────────────
+  const onSquareClick = useCallback(
+    ({ square }: { square: string; piece: { pieceType: string } | null }) => {
+      const game = new Chess(currentFen);
+
+      // If a piece is already selected
+      if (selectedSquare) {
+        const legalTargets = game.moves({ square: selectedSquare as Parameters<typeof game.moves>[0]['square'], verbose: true })
+          .map(m => m.to);
+
+        if (legalTargets.includes(square)) {
+          applyMove(game, selectedSquare, square);
+          return;
+        }
+      }
+
+      // Select piece if it belongs to the current player
+      const piece = game.get(square as Parameters<typeof game.get>[0]);
+      if (piece && piece.color === game.turn()) {
+        setSelectedSquare(square);
+        const moves = game.moves({ square: square as Parameters<typeof game.moves>[0]['square'], verbose: true });
+        const styles: SquareStyles = {
+          [square]: { backgroundColor: 'rgba(99,132,255,0.35)' },
+        };
+        moves.forEach(m => {
+          styles[m.to] = {
+            background: game.get(m.to as Parameters<typeof game.get>[0])
+              ? 'radial-gradient(circle, rgba(220,50,50,0.45) 60%, transparent 62%)'
+              : 'radial-gradient(circle, rgba(0,0,0,0.25) 25%, transparent 27%)',
+            borderRadius: '50%',
+          };
+        });
+        setLegalMoveSquares(styles);
+      } else {
+        setSelectedSquare(null);
+        setLegalMoveSquares({});
+      }
+    },
+    [currentFen, selectedSquare, applyMove],
+  );
+
+  // ── Reset ─────────────────────────────────────────────────────────────────
+  const reset = useCallback(() => {
+    setHistory([]);
+    setCurrentIndex(-1);
+    setStartFen(INITIAL_FEN);
+    setCurrentFen(INITIAL_FEN);
+    setHighlightSquares({});
+    setLegalMoveSquares({});
+    setSelectedSquare(null);
+    setFenInput('');
+    setFenError('');
+  }, []);
+
+  // ── Load FEN ──────────────────────────────────────────────────────────────
+  const loadFen = useCallback(() => {
+    const fen = fenInput.trim();
+    if (!fen) return;
+    try {
+      const game = new Chess(fen);
+      const validated = game.fen();
+      setHistory([]);
+      setCurrentIndex(-1);
+      setStartFen(validated);
+      setCurrentFen(validated);
+      setHighlightSquares({});
+      setLegalMoveSquares({});
+      setSelectedSquare(null);
+      setFenError('');
+      setFenInput('');
+    } catch {
+      setFenError('FEN לא תקין');
+    }
+  }, [fenInput]);
+
+  // ── Copy helpers ──────────────────────────────────────────────────────────
+  const copyWithFeedback = useCallback(async (text: string, type: 'fen' | 'pgn') => {
+    await navigator.clipboard.writeText(text);
+    setCopied(type);
+    setTimeout(() => setCopied(null), 1500);
+  }, []);
+
+  // ── Derived state ─────────────────────────────────────────────────────────
+  const game = new Chess(currentFen);
+  const gameStatus = (() => {
+    if (game.isCheckmate()) return { label: 'מט!', color: '#ef4444' };
+    if (game.isStalemate()) return { label: 'פאט', color: '#eab308' };
+    if (game.isDraw()) return { label: 'תיקו', color: '#eab308' };
+    if (game.isCheck()) return { label: `שאח! תור ${game.turn() === 'w' ? 'לבן' : 'שחור'}`, color: '#f97316' };
+    return {
+      label: game.turn() === 'w' ? '♙ תור לבן' : '♟ תור שחור',
+      color: 'var(--color-text-muted)',
+    };
+  })();
+
+  const movePairs = formatMoveList(history);
+  const pgn = buildPgn(history, startFen);
+  const { whiteCaptured, blackCaptured } = getCapturedPieces(currentFen);
+  const materialBalance = getMaterialBalance(currentFen);
+
+  const combinedSquareStyles: SquareStyles = { ...highlightSquares, ...legalMoveSquares };
+
+  // ─── Render ────────────────────────────────────────────────────────────────
+  return (
+    <div
+      className="min-h-screen flex flex-col items-center gap-4 p-3 md:p-5"
+      style={{ backgroundColor: 'var(--color-surface)', color: 'var(--color-text)' }}
+    >
+      {/* Header */}
+      <header className="w-full max-w-5xl flex items-center justify-between">
+        <h1 className="text-xl font-bold tracking-tight">♟ לוח ניתוח שחמט</h1>
+        <button
+          onClick={() => setDark(d => !d)}
+          className="p-2 rounded-lg hover:opacity-70 transition-opacity"
+          style={{ backgroundColor: 'var(--color-surface-card)', border: '1px solid var(--color-border)' }}
+          title={dark ? 'מצב בהיר' : 'מצב כהה'}
+        >
+          {dark ? <Sun size={17} /> : <Moon size={17} />}
+        </button>
+      </header>
+
+      {/* Main layout */}
+      <div className="w-full max-w-5xl flex flex-col lg:flex-row gap-4 items-start">
+
+        {/* ── Left: Board ─────────────────────────────────────────────────── */}
+        <div className="flex flex-col gap-2 w-full lg:flex-1">
+
+          {/* Black captured (white pieces taken by black, shown near black) */}
+          <CapturedRow
+            pieces={blackCaptured}
+            advantage={materialBalance < 0 ? Math.abs(materialBalance) : 0}
+            side="black"
+          />
+
+          {/* Status + action buttons */}
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-semibold" style={{ color: gameStatus.color }}>
+              {gameStatus.label}
+            </span>
+            <div className="flex gap-1">
+              <IconBtn title="סיבוב לוח" onClick={() => setBoardFlipped(f => !f)}>
+                <FlipVertical2 size={15} />
+              </IconBtn>
+              <IconBtn title="איפוס למיקום ראשוני" onClick={reset}>
+                <RotateCcw size={15} />
+              </IconBtn>
+            </div>
+          </div>
+
+          {/* Board — dir ltr so RTL page doesn't mirror the squares */}
+          <div dir="ltr" style={{ width: '100%', maxWidth: 520 }}>
+            <Chessboard
+              options={{
+                position: currentFen,
+                onPieceDrop: onDrop,
+                onSquareClick: onSquareClick,
+                boardOrientation: boardFlipped ? 'black' : 'white',
+                squareStyles: combinedSquareStyles,
+                boardStyle: {
+                  borderRadius: '6px',
+                  boxShadow: '0 4px 24px rgba(0,0,0,0.2)',
+                },
+                darkSquareStyle: { backgroundColor: '#769656' },
+                lightSquareStyle: { backgroundColor: '#eeeed2' },
+                animationDurationInMs: 120,
+              }}
+            />
+          </div>
+
+          {/* White captured (black pieces taken by white, shown near white) */}
+          <CapturedRow
+            pieces={whiteCaptured}
+            advantage={materialBalance > 0 ? materialBalance : 0}
+            side="white"
+          />
+
+          {/* Navigation controls */}
+          <div className="flex items-center justify-center gap-2 mt-1">
+            <NavBtn onClick={() => goTo(-1)} disabled={currentIndex === -1} title="התחלה">
+              <ChevronsLeft size={17} />
+            </NavBtn>
+            <NavBtn onClick={() => goTo(currentIndex - 1)} disabled={currentIndex === -1} title="קודם (←)">
+              <ChevronLeft size={17} />
+            </NavBtn>
+            <span className="text-xs tabular-nums px-2" style={{ color: 'var(--color-text-muted)' }}>
+              {currentIndex + 1} / {history.length}
+            </span>
+            <NavBtn onClick={() => goTo(currentIndex + 1)} disabled={currentIndex === history.length - 1} title="הבא (→)">
+              <ChevronRight size={17} />
+            </NavBtn>
+            <NavBtn onClick={() => goTo(history.length - 1)} disabled={currentIndex === history.length - 1} title="סוף">
+              <ChevronsRight size={17} />
+            </NavBtn>
+          </div>
+        </div>
+
+        {/* ── Right: Side panel ────────────────────────────────────────────── */}
+        <div className="flex flex-col gap-3 lg:w-64 w-full">
+
+          {/* Move list */}
+          <Panel>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-sm font-semibold">מהלכים</span>
+              <button
+                onClick={() => { setHistory([]); goTo(-1, []); }}
+                title="נקה מהלכים"
+                className="p-1 rounded hover:opacity-60 transition-opacity"
+              >
+                <Trash2 size={13} style={{ color: 'var(--color-text-muted)' }} />
+              </button>
+            </div>
+
+            <div
+              ref={moveListRef}
+              className="overflow-y-auto flex flex-col gap-0.5"
+              style={{ maxHeight: 260, minHeight: 64 }}
+            >
+              {movePairs.length === 0 ? (
+                <p className="text-xs text-center py-5" style={{ color: 'var(--color-text-muted)' }}>
+                  גרור כלי או לחץ עליו להתחיל
+                </p>
+              ) : (
+                movePairs.map(pair => (
+                  <div key={pair.number} className="flex items-center gap-0.5 text-sm font-mono">
+                    <span className="w-7 text-xs shrink-0 text-right pr-1" style={{ color: 'var(--color-text-muted)' }}>
+                      {pair.number}.
+                    </span>
+                    {pair.white && (
+                      <MoveChip
+                        san={pair.white.san}
+                        active={currentIndex === pair.white.idx}
+                        onClick={() => goTo(pair.white!.idx)}
+                      />
+                    )}
+                    {pair.black ? (
+                      <MoveChip
+                        san={pair.black.san}
+                        active={currentIndex === pair.black.idx}
+                        onClick={() => goTo(pair.black!.idx)}
+                      />
+                    ) : (
+                      <span className="flex-1" />
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* PGN copy */}
+            {history.length > 0 && (
+              <button
+                onClick={() => copyWithFeedback(pgn, 'pgn')}
+                className="mt-2 w-full flex items-center justify-center gap-1.5 text-xs py-1.5 rounded transition-opacity hover:opacity-70"
+                style={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
+              >
+                {copied === 'pgn' ? <Check size={12} className="text-green-500" /> : <FileText size={12} />}
+                {copied === 'pgn' ? 'הועתק!' : 'העתק PGN'}
+              </button>
+            )}
+          </Panel>
+
+          {/* FEN panel */}
+          <Panel>
+            <span className="text-sm font-semibold block mb-2">עמדה (FEN)</span>
+
+            {/* Current FEN */}
+            <div className="flex items-center gap-1 mb-2">
+              <input
+                readOnly
+                value={currentFen}
+                className="flex-1 text-xs rounded px-2 py-1 font-mono truncate"
+                style={{
+                  backgroundColor: 'var(--color-surface)',
+                  border: '1px solid var(--color-border)',
+                  color: 'var(--color-text-muted)',
+                }}
+              />
+              <button
+                onClick={() => copyWithFeedback(currentFen, 'fen')}
+                title="העתק FEN"
+                className="p-1.5 rounded hover:opacity-60 transition-opacity shrink-0"
+              >
+                {copied === 'fen' ? <Check size={13} className="text-green-500" /> : <Copy size={13} style={{ color: 'var(--color-text-muted)' }} />}
+              </button>
+            </div>
+
+            {/* Load FEN input */}
+            <div className="flex gap-1 mb-1">
+              <input
+                value={fenInput}
+                onChange={e => { setFenInput(e.target.value); setFenError(''); }}
+                onKeyDown={e => e.key === 'Enter' && loadFen()}
+                placeholder="הדבק FEN לטעינת עמדה"
+                className="flex-1 text-xs rounded px-2 py-1 font-mono"
+                style={{
+                  backgroundColor: 'var(--color-surface)',
+                  border: `1px solid ${fenError ? '#ef4444' : 'var(--color-border)'}`,
+                  color: 'var(--color-text)',
+                }}
+                dir="ltr"
+              />
+              <button
+                onClick={async () => {
+                  const text = await navigator.clipboard.readText();
+                  setFenInput(text.trim());
+                  setFenError('');
+                }}
+                title="הדבק מלוח"
+                className="p-1.5 rounded hover:opacity-60 transition-opacity shrink-0"
+              >
+                <ClipboardPaste size={13} style={{ color: 'var(--color-text-muted)' }} />
+              </button>
+            </div>
+            {fenError && <p className="text-xs text-red-500 mb-1">{fenError}</p>}
+            <button
+              onClick={loadFen}
+              disabled={!fenInput.trim()}
+              className="w-full text-xs py-1.5 rounded font-medium transition-opacity disabled:opacity-35 hover:opacity-80"
+              style={{ backgroundColor: 'var(--color-blue-deep)', color: '#fff' }}
+            >
+              טען עמדה
+            </button>
+          </Panel>
+
+          {/* Tips */}
+          <div
+            className="p-3 rounded-xl text-xs"
+            style={{ backgroundColor: 'var(--color-blue)', border: '1px solid var(--color-border)' }}
+          >
+            <p className="font-semibold mb-1.5" style={{ color: 'var(--color-blue-deep)' }}>קיצורי מקלדת:</p>
+            <div className="space-y-0.5" style={{ color: 'var(--color-text)' }}>
+              <p><kbd className="font-mono font-bold">←</kbd> / <kbd className="font-mono font-bold">→</kbd> — ניווט מהלכים</p>
+              <p><kbd className="font-mono font-bold">Home</kbd> / <kbd className="font-mono font-bold">End</kbd> — ראשון / אחרון</p>
+              <p>לחץ על כלי לראות מהלכים אפשריים</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function Panel({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      className="p-3 rounded-xl"
+      style={{
+        backgroundColor: 'var(--color-surface-card)',
+        border: '1px solid var(--color-border)',
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function IconBtn({ children, onClick, title }: { children: React.ReactNode; onClick: () => void; title?: string }) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className="p-2 rounded-lg hover:opacity-60 transition-opacity"
+      style={{ backgroundColor: 'var(--color-surface-card)', border: '1px solid var(--color-border)' }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function NavBtn({
+  children, onClick, disabled, title,
+}: { children: React.ReactNode; onClick: () => void; disabled: boolean; title?: string }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className="p-2 rounded-lg transition-opacity disabled:opacity-25 hover:opacity-60"
+      style={{ backgroundColor: 'var(--color-surface-card)', border: '1px solid var(--color-border)' }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function MoveChip({ san, active, onClick }: { san: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      data-active={active}
+      onClick={onClick}
+      className="flex-1 px-1.5 py-0.5 rounded text-xs font-mono text-left transition-colors"
+      style={{
+        backgroundColor: active ? 'var(--color-blue-deep)' : 'transparent',
+        color: active ? '#fff' : 'var(--color-text)',
+      }}
+    >
+      {san}
+    </button>
+  );
+}
+
+function CapturedRow({
+  pieces = [], advantage, side,
+}: { pieces?: string[]; advantage: number; side: 'white' | 'black' }) {
+  if (!pieces || (pieces.length === 0 && advantage === 0)) return <div className="h-5" />;
+  return (
+    <div className="flex items-center gap-1 h-5 overflow-hidden">
+      <span className="text-base leading-none">
+        {pieces.map((p, i) => (
+          <span key={i} style={{ opacity: side === 'white' ? 0.9 : 0.75 }}>
+            {PIECE_SYMBOLS[p] ?? p}
+          </span>
+        ))}
+      </span>
+      {advantage > 0 && (
+        <span className="text-xs font-bold" style={{ color: 'var(--color-text-muted)' }}>
+          +{advantage}
+        </span>
+      )}
+    </div>
+  );
+}

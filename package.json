@@ -1,0 +1,26 @@
+{
+  "name": "chess-analysis-board",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port=3000 --host=0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "^4.1.14",
+    "@vitejs/plugin-react": "^5.0.4",
+    "chess.js": "^1.4.0",
+    "lucide-react": "^0.546.0",
+    "react": "^19.0.0",
+    "react-chessboard": "^5.10.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "tailwindcss": "^4.1.14",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0"
+  }
+}
