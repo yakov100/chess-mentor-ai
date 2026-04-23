@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
+  base: '/chess-mentor-ai/',
   plugins: [react(), tailwindcss()],
   server: {
     port: 3000,
