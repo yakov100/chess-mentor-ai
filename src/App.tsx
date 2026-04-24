@@ -117,9 +117,12 @@ const PIECE_SYMBOLS: Record<string, string> = {
   p: '♟', n: '♞', b: '♝', r: '♜', q: '♛',
 };
 
-// Compare FEN positions ignoring half-move clock and full-move number
+// Compare FEN positions by board layout + active turn only.
+// Ignores castling rights, en passant, and move counters so that the
+// simplified FENs produced by the bookmarklet (which always emits KQkq -)
+// still match the accurate FENs maintained by chess.js.
 function normalizeFen(fen: string): string {
-  return fen.split(' ').slice(0, 4).join(' ');
+  return fen.split(' ').slice(0, 2).join(' ');
 }
 
 // If incomingFen is reachable from fromFen via exactly one legal move, return
@@ -218,29 +221,82 @@ export default function App() {
   // ── Bookmarklet URL (generated once from current page URL) ───────────────
   const bookmarkletUrl = useMemo(() => {
     const targetUrl = window.location.href.split('?')[0].split('#')[0];
-    // Minified bookmarklet — polls chess.com board element for FEN and sends
-    // it to the chess-mentor-ai window via postMessage every 500 ms.
-    const js = `(function(){`
-      + `var u='${targetUrl}';`
-      + `var w=window.open(u,'chess-mentor-ai');`
-      + `var last=null;`
-      + `function f(){`
-      + `var b=document.querySelector('chess-board');`
-      + `if(!b)return null;`
-      + `try{return b.game.getFen();}catch(e){}`
-      + `try{return b.game.fen();}catch(e){}`
-      + `try{return b.game.fen;}catch(e){}`
-      + `try{return b._game&&b._game.getFen();}catch(e){}`
-      + `try{var c=b._controller;return c&&c.game&&c.game.getFen();}catch(e){}`
-      + `return null;`
-      + `}`
-      + `setInterval(function(){`
-      + `var fen=f();`
-      + `if(fen&&fen!==last){last=fen;if(w&&!w.closed)w.postMessage({type:'chess-sync',fen:fen},'*');}`
-      + `},500);`
-      + `alert('Chess Mentor AI \\u05de\\u05ea\\u05d7\\u05d9\\u05dc \\u05dc\\u05e2\\u05e7\\u05d5\\u05d1!');`
-      + `})()`;
-    return `javascript:${encodeURIComponent(js)}`;
+
+    // Two-layer FEN extraction strategy:
+    //  Layer 1 (api): call chess.com's internal JS game object — fast but
+    //    fragile (API name can change between chess.com releases).
+    //  Layer 2 (dom): read piece positions from .piece.square-XY elements —
+    //    stable because these are the actual rendered DOM classes. Falls back
+    //    to shadow-root query if pieces are inside a shadow DOM. Turn is
+    //    inferred from the number of moves in the move-list DOM.
+    const script = `(function(){
+var u=${JSON.stringify(targetUrl)};
+var w=window.open(u,'chess-mentor-ai');
+if(!w){alert('Chess Mentor: \\u05d0\\u05e4\\u05e9\\u05e8 \\u05e9-popup \\u05e0\\u05d7\\u05e1\\u05dd. \\u05d0\\u05e4\\u05e9\\u05e8 \\u05d0\\u05ea \\u05d4/chess-mentor \\u05d9\\u05d3\\u05e0\\u05d9\\u05ea \\u05d5\\u05e0\\u05e1\\u05d4 \\u05e9\\u05e0\\u05d9\\u05ea.');return;}
+var last=null;
+var PM={'wp':'P','wn':'N','wb':'B','wr':'R','wq':'Q','wk':'K','bp':'p','bn':'n','bb':'b','br':'r','bq':'q','bk':'k'};
+function api(){
+  var b=document.querySelector('chess-board')||document.querySelector('wc-chess-board');
+  if(!b)return null;
+  var ms=[
+    function(){return b.game.getFen();},
+    function(){var f=b.game.fen;return typeof f==='string'?f:null;},
+    function(){return b.game.getFEN();},
+    function(){return b._game.getFen();},
+    function(){var c=b._controller;return c&&c.game&&c.game.getFen();}
+  ];
+  for(var i=0;i<ms.length;i++){
+    try{var f=ms[i]();if(f&&typeof f==='string'&&f.split(' ').length>=4)return f;}catch(e){}
+  }
+  return null;
+}
+function turn(){
+  var ss=['.node-highlight-content','[data-ply]','.move-text-component','.move'];
+  for(var i=0;i<ss.length;i++){
+    var n=document.querySelectorAll(ss[i]);
+    if(n&&n.length>0)return n.length%2===0?'w':'b';
+  }
+  return 'w';
+}
+function dom(){
+  var pp=document.querySelectorAll('.piece');
+  if(!pp||!pp.length){
+    var b=document.querySelector('chess-board');
+    var sr=b&&b.shadowRoot;
+    if(sr)pp=sr.querySelectorAll('.piece');
+  }
+  if(!pp||!pp.length)return null;
+  var bd={};
+  [].forEach.call(pp,function(el){
+    var cl=[].slice.call(el.classList),pc=null,sq=null;
+    for(var i=0;i<cl.length;i++){
+      if(PM[cl[i]])pc=cl[i];
+      if(/^square-[1-8][1-8]$/.test(cl[i]))sq=cl[i];
+    }
+    if(pc&&sq)bd[String.fromCharCode(96+parseInt(sq[7]))+sq[8]]=PM[pc];
+  });
+  var wk=false,bk=false;
+  for(var s in bd){if(bd[s]==='K')wk=true;if(bd[s]==='k')bk=true;}
+  if(!wk||!bk)return null;
+  var fen='';
+  for(var r=8;r>=1;r--){
+    if(r<8)fen+='/';
+    var e=0;
+    for(var f=1;f<=8;f++){
+      var p=bd[String.fromCharCode(96+f)+r];
+      if(p){if(e){fen+=e;e=0;}fen+=p;}else e++;
+    }
+    if(e)fen+=e;
+  }
+  return fen+' '+turn()+' KQkq - 0 1';
+}
+setInterval(function(){
+  var f=api()||dom();
+  if(f&&f!==last){last=f;if(w&&!w.closed)w.postMessage({type:'chess-sync',fen:f},'*');}
+},500);
+alert('Chess Mentor AI \\u05de\\u05ea\\u05d7\\u05d9\\u05dc \\u05dc\\u05e2\\u05e7\\u05d5\\u05d1!');
+})()`;
+    return `javascript:${encodeURIComponent(script)}`;
   }, []);
 
   // ── Internal: apply a chess.js Move and update state ─────────────────────
