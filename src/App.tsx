@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { Chessboard } from 'react-chessboard';
 import { Chess } from 'chess.js';
 import {
@@ -15,6 +15,7 @@ import {
   Moon,
   FileText,
   Check,
+  Radio,
 } from 'lucide-react';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -116,6 +117,30 @@ const PIECE_SYMBOLS: Record<string, string> = {
   p: '♟', n: '♞', b: '♝', r: '♜', q: '♛',
 };
 
+// Compare FEN positions ignoring half-move clock and full-move number
+function normalizeFen(fen: string): string {
+  return fen.split(' ').slice(0, 4).join(' ');
+}
+
+// If incomingFen is reachable from fromFen via exactly one legal move, return
+// that move's from/to squares. Returns null otherwise.
+function findMoveForFen(fromFen: string, incomingFen: string): { from: string; to: string } | null {
+  const normalizedTarget = normalizeFen(incomingFen);
+  try {
+    const game = new Chess(fromFen);
+    for (const move of game.moves({ verbose: true })) {
+      const g = new Chess(fromFen);
+      g.move(move);
+      if (normalizeFen(g.fen()) === normalizedTarget) {
+        return { from: move.from, to: move.to };
+      }
+    }
+  } catch {
+    // invalid FEN
+  }
+  return null;
+}
+
 // ─── App ─────────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -134,6 +159,10 @@ export default function App() {
   const [fenInput, setFenInput] = useState('');
   const [fenError, setFenError] = useState('');
   const [copied, setCopied] = useState<'fen' | 'pgn' | null>(null);
+
+  const [syncEnabled, setSyncEnabled] = useState(true);
+  const [isSyncConnected, setIsSyncConnected] = useState(false);
+  const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const moveListRef = useRef<HTMLDivElement>(null);
 
@@ -186,6 +215,34 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKey);
   }, [goTo, currentIndex, history.length]);
 
+  // ── Bookmarklet URL (generated once from current page URL) ───────────────
+  const bookmarkletUrl = useMemo(() => {
+    const targetUrl = window.location.href.split('?')[0].split('#')[0];
+    // Minified bookmarklet — polls chess.com board element for FEN and sends
+    // it to the chess-mentor-ai window via postMessage every 500 ms.
+    const js = `(function(){`
+      + `var u='${targetUrl}';`
+      + `var w=window.open(u,'chess-mentor-ai');`
+      + `var last=null;`
+      + `function f(){`
+      + `var b=document.querySelector('chess-board');`
+      + `if(!b)return null;`
+      + `try{return b.game.getFen();}catch(e){}`
+      + `try{return b.game.fen();}catch(e){}`
+      + `try{return b.game.fen;}catch(e){}`
+      + `try{return b._game&&b._game.getFen();}catch(e){}`
+      + `try{var c=b._controller;return c&&c.game&&c.game.getFen();}catch(e){}`
+      + `return null;`
+      + `}`
+      + `setInterval(function(){`
+      + `var fen=f();`
+      + `if(fen&&fen!==last){last=fen;if(w&&!w.closed)w.postMessage({type:'chess-sync',fen:fen},'*');}`
+      + `},500);`
+      + `alert('Chess Mentor AI \\u05de\\u05ea\\u05d7\\u05d9\\u05dc \\u05dc\\u05e2\\u05e7\\u05d5\\u05d1!');`
+      + `})()`;
+    return `javascript:${encodeURIComponent(js)}`;
+  }, []);
+
   // ── Internal: apply a chess.js Move and update state ─────────────────────
   const applyMove = useCallback(
     (game: Chess, from: string, to: string) => {
@@ -225,6 +282,57 @@ export default function App() {
     [currentFen, currentIndex, history, goTo],
   );
 
+  // ── Live sync: postMessage listener ───────────────────────────────────────
+  useEffect(() => {
+    if (!syncEnabled) {
+      if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+      setIsSyncConnected(false);
+      return;
+    }
+
+    const handler = (e: MessageEvent) => {
+      if (e.data?.type !== 'chess-sync' || typeof e.data.fen !== 'string') return;
+      const incoming: string = e.data.fen;
+
+      // Mark as connected and reset the connection-lost timer
+      setIsSyncConnected(true);
+      if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+      syncTimeoutRef.current = setTimeout(() => setIsSyncConnected(false), 3000);
+
+      // Ignore if already at this position
+      if (normalizeFen(incoming) === normalizeFen(currentFen)) return;
+
+      // Case 1: incoming FEN is exactly one legal move ahead — apply it
+      const found = findMoveForFen(currentFen, incoming);
+      if (found) {
+        const game = new Chess(currentFen);
+        applyMove(game, found.from, found.to);
+        return;
+      }
+
+      // Case 2: completely different position — load as fresh start FEN
+      try {
+        const g = new Chess(incoming);
+        const validated = g.fen();
+        setHistory([]);
+        setCurrentIndex(-1);
+        setStartFen(validated);
+        setCurrentFen(validated);
+        setHighlightSquares({});
+        setLegalMoveSquares({});
+        setSelectedSquare(null);
+      } catch {
+        // ignore invalid FEN
+      }
+    };
+
+    window.addEventListener('message', handler);
+    return () => {
+      window.removeEventListener('message', handler);
+      if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+    };
+  }, [syncEnabled, currentFen, applyMove]);
+
   // ── Drag-and-drop handler ─────────────────────────────────────────────────
   const onDrop = useCallback(
     ({ sourceSquare, targetSquare }: { sourceSquare: string; targetSquare: string | null; piece: { pieceType: string } }): boolean => {
@@ -245,7 +353,7 @@ export default function App() {
         const legalTargets = game.moves({ square: selectedSquare as Parameters<typeof game.moves>[0]['square'], verbose: true })
           .map(m => m.to);
 
-        if (legalTargets.includes(square)) {
+        if ((legalTargets as string[]).includes(square)) {
           applyMove(game, selectedSquare, square);
           return;
         }
@@ -556,6 +664,62 @@ export default function App() {
               style={{ backgroundColor: 'var(--color-blue-deep)', color: '#fff' }}
             >
               טען עמדה
+            </button>
+          </Panel>
+
+          {/* Live sync panel */}
+          <Panel>
+            <div className="flex items-center justify-between mb-2">
+              <span className="flex items-center gap-1.5 text-sm font-semibold">
+                <Radio size={13} style={{ color: isSyncConnected ? '#22c55e' : 'var(--color-text-muted)' }} />
+                עיקוב משחק חי
+              </span>
+              <span
+                className="text-xs px-2 py-0.5 rounded-full font-medium"
+                style={{
+                  backgroundColor: isSyncConnected ? 'rgba(34,197,94,0.15)' : 'var(--color-surface)',
+                  color: isSyncConnected ? '#16a34a' : 'var(--color-text-muted)',
+                  border: '1px solid var(--color-border)',
+                }}
+              >
+                {isSyncConnected ? 'מחובר' : 'ממתין'}
+              </span>
+            </div>
+
+            <ol className="text-xs space-y-1 mb-3" style={{ color: 'var(--color-text-muted)' }}>
+              <li>1. גרור את הכפתור הירוק לסרגל הסימניות</li>
+              <li>2. פתח משחק ב-chess.com</li>
+              <li>3. לחץ על הסימנייה — הלוח יתחיל לשקף</li>
+            </ol>
+
+            {/* Bookmarklet drag target */}
+            <a
+              href={bookmarkletUrl}
+              onClick={e => e.preventDefault()}
+              draggable
+              className="flex items-center justify-center gap-1.5 w-full text-xs py-2 px-3 rounded-lg font-semibold mb-2 select-none"
+              style={{
+                backgroundColor: '#16a34a',
+                color: '#fff',
+                cursor: 'grab',
+                border: '2px dashed rgba(255,255,255,0.35)',
+                textDecoration: 'none',
+              }}
+              title="גרור לסרגל הסימניות"
+            >
+              ♟ Chess Mentor — גרור לסרגל
+            </a>
+
+            <button
+              onClick={() => setSyncEnabled(v => !v)}
+              className="w-full text-xs py-1.5 rounded-lg transition-opacity hover:opacity-70"
+              style={{
+                backgroundColor: syncEnabled ? 'var(--color-surface)' : 'var(--color-blue-deep)',
+                color: syncEnabled ? 'var(--color-text-muted)' : '#fff',
+                border: '1px solid var(--color-border)',
+              }}
+            >
+              {syncEnabled ? 'השהה עיקוב' : 'חדש עיקוב'}
             </button>
           </Panel>
 
