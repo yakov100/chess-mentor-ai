@@ -119,7 +119,7 @@ const PIECE_SYMBOLS: Record<string, string> = {
 
 // Compare FEN positions by board layout + active turn only.
 // Ignores castling rights, en passant, and move counters so that the
-// simplified FENs produced by the bookmarklet (which always emits KQkq -)
+// simplified FENs produced by the bookmarklet (which cannot infer these)
 // still match the accurate FENs maintained by chess.js.
 function normalizeFen(fen: string): string {
   return fen.split(' ').slice(0, 2).join(' ');
@@ -313,7 +313,7 @@ function dom(){
     }
     if(e)fen+=e;
   }
-  return fen+' '+turn()+' KQkq - 0 1';
+  return fen+' '+turn()+' - - 0 1';
 }
 function send(f){if(w&&!w.closed)w.postMessage({type:'chess-sync',fen:f},'*');}
 setInterval(function(){
@@ -364,7 +364,7 @@ alert('Chess Mentor AI \\u05de\\u05ea\\u05d7\\u05d9\\u05dc \\u05dc\\u05e2\\u05e7
     [currentFen, currentIndex, history, goTo],
   );
 
-  // ── Live sync: postMessage listener ───────────────────────────────────────
+  // ── Live sync: postMessage listener + same-origin tab relay ───────────────
   useEffect(() => {
     if (!syncEnabled) {
       if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
@@ -372,10 +372,12 @@ alert('Chess Mentor AI \\u05de\\u05ea\\u05d7\\u05d9\\u05dc \\u05dc\\u05e2\\u05e7
       return;
     }
 
-    const handler = (e: MessageEvent) => {
-      if (e.data?.type !== 'chess-sync' || typeof e.data.fen !== 'string') return;
-      const incoming: string = e.data.fen;
+    const relay =
+      typeof BroadcastChannel === 'undefined'
+        ? null
+        : new BroadcastChannel('chess-mentor-ai-sync');
 
+    const applyIncomingFen = (incoming: string) => {
       // Mark as connected and reset the connection-lost timer
       setIsSyncConnected(true);
       if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
@@ -408,9 +410,23 @@ alert('Chess Mentor AI \\u05de\\u05ea\\u05d7\\u05d9\\u05dc \\u05dc\\u05e2\\u05e7
       }
     };
 
+    const handler = (e: MessageEvent) => {
+      if (e.data?.type !== 'chess-sync' || typeof e.data.fen !== 'string') return;
+      applyIncomingFen(e.data.fen);
+      relay?.postMessage(e.data);
+    };
+
+    const relayHandler = (e: MessageEvent) => {
+      if (e.data?.type !== 'chess-sync' || typeof e.data.fen !== 'string') return;
+      applyIncomingFen(e.data.fen);
+    };
+
     window.addEventListener('message', handler);
+    relay?.addEventListener('message', relayHandler);
     return () => {
       window.removeEventListener('message', handler);
+      relay?.removeEventListener('message', relayHandler);
+      relay?.close();
       if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
     };
   }, [syncEnabled, currentFen, applyMove]);
