@@ -237,7 +237,28 @@ export default function App() {
     const script = `(function(){
 var u=${JSON.stringify(targetUrl)};
 var w=window.open(u,'chess-mentor-ai');
-if(!w){alert('Chess Mentor: \\u05d0\\u05e4\\u05e9\\u05e8 \\u05e9-popup \\u05e0\\u05d7\\u05e1\\u05dd. \\u05d0\\u05e4\\u05e9\\u05e8 \\u05d0\\u05ea \\u05d4/chess-mentor \\u05d9\\u05d3\\u05e0\\u05d9\\u05ea \\u05d5\\u05e0\\u05e1\\u05d4 \\u05e9\\u05e0\\u05d9\\u05ea.');return;}
+var ready=!!w;
+if(!w){
+  var old=document.getElementById('chess-mentor-ai-frame-wrap');
+  if(old)old.remove();
+  var wrap=document.createElement('div');
+  wrap.id='chess-mentor-ai-frame-wrap';
+  wrap.style.cssText='position:fixed!important;z-index:2147483647!important;top:12px!important;right:12px!important;bottom:12px!important;left:auto!important;width:430px!important;max-width:calc(100vw - 24px)!important;height:calc(100vh - 24px)!important;border:2px solid #16a34a!important;border-radius:14px!important;overflow:hidden!important;background:white!important;box-shadow:0 20px 60px rgba(0,0,0,.45)!important;transform:none!important';
+  var close=document.createElement('button');
+  close.textContent='×';
+  close.title='Close Chess Mentor';
+  close.style.cssText='position:absolute;z-index:2;top:6px;right:8px;width:28px;height:28px;border:0;border-radius:999px;background:#111827;color:white;font-size:20px;line-height:24px;cursor:pointer';
+  close.onclick=function(){wrap.remove();};
+  var frame=document.createElement('iframe');
+  frame.src=u;
+  frame.allow='clipboard-read; clipboard-write';
+  frame.style.cssText='width:100%;height:100%;border:0';
+  frame.onload=function(){ready=true;last=null;tick();};
+  wrap.appendChild(frame);
+  wrap.appendChild(close);
+  document.body.appendChild(wrap);
+  w=frame.contentWindow;
+}
 var last=null;
 var PM={'wp':'P','wn':'N','wb':'B','wr':'R','wq':'Q','wk':'K','bp':'p','bn':'n','bb':'b','br':'r','bq':'q','bk':'k'};
 function board(){return document.querySelector('wc-chess-board')||document.querySelector('chess-board');}
@@ -315,11 +336,12 @@ function dom(){
   }
   return fen+' '+turn()+' - - 0 1';
 }
-function send(f){if(w&&!w.closed)w.postMessage({type:'chess-sync',fen:f},'*');}
-setInterval(function(){
+function send(f){if(ready&&w&&!w.closed)w.postMessage({type:'chess-sync',fen:f},'*');}
+function tick(){
   var f=api()||dom();
   if(f&&f!==last){last=f;send(f);}
-},500);
+}
+setInterval(tick,500);
 alert('Chess Mentor AI \\u05de\\u05ea\\u05d7\\u05d9\\u05dc \\u05dc\\u05e2\\u05e7\\u05d5\\u05d1!');
 })()`;
     return `javascript:${encodeURIComponent(script)}`;
