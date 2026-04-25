@@ -169,6 +169,11 @@ export default function App() {
 
   const moveListRef = useRef<HTMLDivElement>(null);
 
+  // ── Name this window so the bookmarklet can target the existing tab ───────
+  useEffect(() => {
+    window.name = 'chess-mentor-ai';
+  }, []);
+
   // ── Sync dark mode ────────────────────────────────────────────────────────
   useEffect(() => {
     document.documentElement.classList.toggle('dark', dark);
@@ -235,36 +240,56 @@ var w=window.open(u,'chess-mentor-ai');
 if(!w){alert('Chess Mentor: \\u05d0\\u05e4\\u05e9\\u05e8 \\u05e9-popup \\u05e0\\u05d7\\u05e1\\u05dd. \\u05d0\\u05e4\\u05e9\\u05e8 \\u05d0\\u05ea \\u05d4/chess-mentor \\u05d9\\u05d3\\u05e0\\u05d9\\u05ea \\u05d5\\u05e0\\u05e1\\u05d4 \\u05e9\\u05e0\\u05d9\\u05ea.');return;}
 var last=null;
 var PM={'wp':'P','wn':'N','wb':'B','wr':'R','wq':'Q','wk':'K','bp':'p','bn':'n','bb':'b','br':'r','bq':'q','bk':'k'};
+function board(){return document.querySelector('wc-chess-board')||document.querySelector('chess-board');}
 function api(){
-  var b=document.querySelector('chess-board')||document.querySelector('wc-chess-board');
+  var b=board();
   if(!b)return null;
   var ms=[
     function(){return b.game.getFen();},
     function(){var f=b.game.fen;return typeof f==='string'?f:null;},
     function(){return b.game.getFEN();},
     function(){return b._game.getFen();},
-    function(){var c=b._controller;return c&&c.game&&c.game.getFen();}
+    function(){var c=b._controller;return c&&c.game&&c.game.getFen();},
+    function(){return b.controller.getFen();},
+    function(){return b.controller.game.getFen();},
+    function(){var g=b.getAttribute('fen');return(g&&g.split(' ').length>=4)?g:null;},
+    function(){var g=b.gameSetup;return g&&g.fen?g.fen:null;},
+    function(){var v=b.__vue_app__;if(!v)return null;var inst=v._instance||v._container&&v._container.__vueParentComponent;if(inst&&inst.proxy&&inst.proxy.game)return inst.proxy.game.getFen();}
   ];
   for(var i=0;i<ms.length;i++){
     try{var f=ms[i]();if(f&&typeof f==='string'&&f.split(' ').length>=4)return f;}catch(e){}
   }
   return null;
 }
+function pieces(){
+  var pp=document.querySelectorAll('.piece');
+  if(pp&&pp.length)return pp;
+  var boards=['wc-chess-board','chess-board'];
+  for(var i=0;i<boards.length;i++){
+    var b=document.querySelector(boards[i]);
+    var sr=b&&b.shadowRoot;
+    if(sr){var p=sr.querySelectorAll('.piece');if(p&&p.length)return p;}
+  }
+  return null;
+}
 function turn(){
-  var ss=['.node-highlight-content','[data-ply]','.move-text-component','.move'];
+  var ss=[
+    '[data-ply]','vertical-move-list .move',
+    '.node-highlight-content','.move-text-component',
+    '.moves-list-row','.move'
+  ];
   for(var i=0;i<ss.length;i++){
     var n=document.querySelectorAll(ss[i]);
     if(n&&n.length>0)return n.length%2===0?'w':'b';
   }
+  var b=board();
+  if(b){
+    try{var t=b.game.getTurn?b.game.getTurn():b.game.turn;if(t==='white')return 'w';if(t==='black')return 'b';}catch(e){}
+  }
   return 'w';
 }
 function dom(){
-  var pp=document.querySelectorAll('.piece');
-  if(!pp||!pp.length){
-    var b=document.querySelector('chess-board');
-    var sr=b&&b.shadowRoot;
-    if(sr)pp=sr.querySelectorAll('.piece');
-  }
+  var pp=pieces();
   if(!pp||!pp.length)return null;
   var bd={};
   [].forEach.call(pp,function(el){
@@ -290,9 +315,10 @@ function dom(){
   }
   return fen+' '+turn()+' KQkq - 0 1';
 }
+function send(f){if(w&&!w.closed)w.postMessage({type:'chess-sync',fen:f},'*');}
 setInterval(function(){
   var f=api()||dom();
-  if(f&&f!==last){last=f;if(w&&!w.closed)w.postMessage({type:'chess-sync',fen:f},'*');}
+  if(f&&f!==last){last=f;send(f);}
 },500);
 alert('Chess Mentor AI \\u05de\\u05ea\\u05d7\\u05d9\\u05dc \\u05dc\\u05e2\\u05e7\\u05d5\\u05d1!');
 })()`;
