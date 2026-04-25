@@ -228,12 +228,10 @@ export default function App() {
     const targetUrl = window.location.href.split('?')[0].split('#')[0];
 
     // Two-layer FEN extraction strategy:
-    //  Layer 1 (api): call chess.com's internal JS game object — fast but
-    //    fragile (API name can change between chess.com releases).
-    //  Layer 2 (dom): read piece positions from .piece.square-XY elements —
-    //    stable because these are the actual rendered DOM classes. Falls back
-    //    to shadow-root query if pieces are inside a shadow DOM. Turn is
-    //    inferred from the number of moves in the move-list DOM.
+    //  Layer 1 (dom): read piece positions from .piece.square-XY elements —
+    //    this reflects the board the user is actually seeing on chess.com.
+    //  Layer 2 (api): call chess.com's internal JS game object only if DOM
+    //    extraction fails. Internal API state can be stale on some pages.
     const script = `(function(){
 var u=${JSON.stringify(targetUrl)};
 var w=window.open(u,'chess-mentor-ai');
@@ -338,7 +336,7 @@ function dom(){
 }
 function send(f){if(ready&&w&&!w.closed)w.postMessage({type:'chess-sync',fen:f},'*');}
 function tick(){
-  var f=api()||dom();
+  var f=dom()||api();
   if(f&&f!==last){last=f;send(f);}
 }
 setInterval(tick,500);
