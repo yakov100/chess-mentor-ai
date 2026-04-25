@@ -285,7 +285,7 @@ function dom(){
 }
 function send(f){if(ready&&w&&!w.closed)w.postMessage({type:'chess-sync',fen:f},'*');}
 function tick(){
-  var f=api()||dom();
+  var f=dom()||api();
   if(f&&f!==last){last=f;send(f);}
 }
 setInterval(tick,500);
