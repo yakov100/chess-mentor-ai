@@ -168,6 +168,7 @@ export default function App() {
   const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const moveListRef = useRef<HTMLDivElement>(null);
+  const bookmarkletAnchorRef = useRef<HTMLAnchorElement>(null);
 
   // ── Name this window so the bookmarklet can target the existing tab ───────
   useEffect(() => {
@@ -234,29 +235,12 @@ export default function App() {
     //    extraction fails. Internal API state can be stale on some pages.
     const script = `(function(){
 var u=${JSON.stringify(targetUrl)};
+// Step 1: try to focus existing app window (no popup created, just a focus)
 var w=window.open(u,'chess-mentor-ai');
-var ready=!!w;
-if(!w){
-  var old=document.getElementById('chess-mentor-ai-frame-wrap');
-  if(old)old.remove();
-  var wrap=document.createElement('div');
-  wrap.id='chess-mentor-ai-frame-wrap';
-  wrap.style.cssText='position:fixed!important;z-index:2147483647!important;top:12px!important;right:12px!important;bottom:12px!important;left:auto!important;width:430px!important;max-width:calc(100vw - 24px)!important;height:calc(100vh - 24px)!important;border:2px solid #16a34a!important;border-radius:14px!important;overflow:hidden!important;background:white!important;box-shadow:0 20px 60px rgba(0,0,0,.45)!important;transform:none!important';
-  var close=document.createElement('button');
-  close.textContent='×';
-  close.title='Close Chess Mentor';
-  close.style.cssText='position:absolute;z-index:2;top:6px;right:8px;width:28px;height:28px;border:0;border-radius:999px;background:#111827;color:white;font-size:20px;line-height:24px;cursor:pointer';
-  close.onclick=function(){wrap.remove();};
-  var frame=document.createElement('iframe');
-  frame.src=u;
-  frame.allow='clipboard-read; clipboard-write';
-  frame.style.cssText='width:100%;height:100%;border:0';
-  frame.onload=function(){ready=true;last=null;tick();};
-  wrap.appendChild(frame);
-  wrap.appendChild(close);
-  document.body.appendChild(wrap);
-  w=frame.contentWindow;
-}
+// Step 2: if blocked, open as a new tab
+if(!w) w=window.open(u,'_blank');
+// Step 3: still blocked — tell the user
+if(!w){alert('Chess Mentor: אפשר פופ-אפים מ-chess.com ונסה שנית.');return;}
 var last=null;
 var PM={'wp':'P','wn':'N','wb':'B','wr':'R','wq':'Q','wk':'K','bp':'p','bn':'n','bb':'b','br':'r','bq':'q','bk':'k'};
 function board(){return document.querySelector('wc-chess-board')||document.querySelector('chess-board');}
@@ -334,16 +318,26 @@ function dom(){
   }
   return fen+' '+turn()+' - - 0 1';
 }
-function send(f){if(ready&&w&&!w.closed)w.postMessage({type:'chess-sync',fen:f},'*');}
+function send(f){
+  if(!w||w.closed)return;
+  try{w.postMessage({type:'chess-sync',fen:f},'*');}catch(e){}
+}
 function tick(){
   var f=dom()||api();
   if(f&&f!==last){last=f;send(f);}
 }
 setInterval(tick,500);
-alert('Chess Mentor AI \\u05de\\u05ea\\u05d7\\u05d9\\u05dc \\u05dc\\u05e2\\u05e7\\u05d5\\u05d1!');
+tick();
 })()`;
     return `javascript:${encodeURIComponent(script)}`;
   }, []);
+
+  // ── Bypass React's javascript: URL sanitization by setting href via DOM ref ─
+  useEffect(() => {
+    if (bookmarkletAnchorRef.current) {
+      bookmarkletAnchorRef.current.setAttribute('href', bookmarkletUrl);
+    }
+  }, [bookmarkletUrl]);
 
   // ── Internal: apply a chess.js Move and update state ─────────────────────
   const applyMove = useCallback(
@@ -805,14 +799,15 @@ alert('Chess Mentor AI \\u05de\\u05ea\\u05d7\\u05d9\\u05dc \\u05dc\\u05e2\\u05e7
             </div>
 
             <ol className="text-xs space-y-1 mb-3" style={{ color: 'var(--color-text-muted)' }}>
-              <li>1. גרור את הכפתור הירוק לסרגל הסימניות</li>
-              <li>2. פתח משחק ב-chess.com</li>
-              <li>3. לחץ על הסימנייה — הלוח יתחיל לשקף</li>
+              <li>1. השאר דף זה פתוח בטאב</li>
+              <li>2. גרור את הכפתור הירוק לסרגל הסימניות</li>
+              <li>3. פתח משחק ב-chess.com ולחץ על הסימנייה</li>
             </ol>
 
-            {/* Bookmarklet drag target */}
+            {/* Bookmarklet drag target — href set via ref to bypass React's javascript: sanitization */}
             <a
-              href={bookmarkletUrl}
+              ref={bookmarkletAnchorRef}
+              href="#"
               onClick={e => e.preventDefault()}
               draggable
               className="flex items-center justify-center gap-1.5 w-full text-xs py-2 px-3 rounded-lg font-semibold mb-2 select-none"
