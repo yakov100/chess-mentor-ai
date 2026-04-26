@@ -147,7 +147,7 @@ function findMoveForFen(fromFen: string, incomingFen: string): { from: string; t
 // ─── App ─────────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const [dark, setDark] = useState(false);
+  const [dark, setDark] = useState(true);
   const [boardFlipped, setBoardFlipped] = useState(false);
 
   const [history, setHistory] = useState<HistoryEntry[]>([]);
@@ -175,9 +175,9 @@ export default function App() {
     window.name = 'chess-mentor-ai';
   }, []);
 
-  // ── Sync dark mode ────────────────────────────────────────────────────────
+  // ── Sync dark/light mode ──────────────────────────────────────────────────
   useEffect(() => {
-    document.documentElement.classList.toggle('dark', dark);
+    document.documentElement.classList.toggle('light', !dark);
   }, [dark]);
 
   // ── Auto-scroll move list ─────────────────────────────────────────────────
@@ -559,53 +559,70 @@ tick();
 
   // ─── Render ────────────────────────────────────────────────────────────────
   return (
-    <div
-      className="min-h-screen flex flex-col items-center gap-4 p-3 md:p-5"
-      style={{ backgroundColor: 'var(--color-surface)', color: 'var(--color-text)' }}
-    >
-      {/* Header */}
-      <header className="w-full max-w-5xl flex items-center justify-between">
-        <h1 className="text-xl font-bold tracking-tight">♟ לוח ניתוח שחמט</h1>
-        <button
-          onClick={() => setDark(d => !d)}
-          className="p-2 rounded-lg hover:opacity-70 transition-opacity"
-          style={{ backgroundColor: 'var(--color-surface-card)', border: '1px solid var(--color-border)' }}
-          title={dark ? 'מצב בהיר' : 'מצב כהה'}
-        >
-          {dark ? <Sun size={17} /> : <Moon size={17} />}
-        </button>
+    <div className="app-root">
+
+      {/* ── Header ────────────────────────────────────────────────────── */}
+      <header className="app-header">
+        <div className="app-logo">
+          <span className="logo-king">♚</span>
+          <div className="logo-wordmark">
+            <span className="logo-title">Chess Mentor</span>
+            <span className="logo-sub">ניתוח עמדה</span>
+          </div>
+        </div>
+        <div className="header-right">
+          {isSyncConnected && (
+            <div className="live-badge">
+              <div className="live-dot">
+                <div className="live-dot-core" />
+              </div>
+              LIVE
+            </div>
+          )}
+          <button className="theme-btn" onClick={() => setDark(d => !d)} title={dark ? 'מצב בהיר' : 'מצב כהה'}>
+            {dark ? <Sun size={15} /> : <Moon size={15} />}
+          </button>
+        </div>
       </header>
 
-      {/* Main layout */}
-      <div className="w-full max-w-5xl flex flex-col lg:flex-row gap-4 items-start">
+      {/* ── Body ──────────────────────────────────────────────────────── */}
+      <div className="app-body">
 
-        {/* ── Left: Board ─────────────────────────────────────────────────── */}
-        <div className="flex flex-col gap-2 w-full lg:flex-1">
+        {/* ── Board column ─────────────────────────────────────────────── */}
+        <section className="board-col">
 
-          {/* Black captured (white pieces taken by black, shown near black) */}
-          <CapturedRow
-            pieces={blackCaptured}
+          {/* Black player strip */}
+          <PlayerStrip
+            colorSide="black"
+            captured={blackCaptured}
             advantage={materialBalance < 0 ? Math.abs(materialBalance) : 0}
-            side="black"
+            isActive={game.turn() === 'b' && !game.isGameOver()}
           />
 
           {/* Status + action buttons */}
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-semibold" style={{ color: gameStatus.color }}>
+          <div className="status-bar">
+            <span
+              className="status-chip"
+              style={{
+                color: gameStatus.color,
+                background: `${gameStatus.color}18`,
+                borderColor: `${gameStatus.color}30`,
+              }}
+            >
               {gameStatus.label}
             </span>
-            <div className="flex gap-1">
-              <IconBtn title="סיבוב לוח" onClick={() => setBoardFlipped(f => !f)}>
-                <FlipVertical2 size={15} />
-              </IconBtn>
-              <IconBtn title="איפוס למיקום ראשוני" onClick={reset}>
-                <RotateCcw size={15} />
-              </IconBtn>
+            <div className="board-btn-group">
+              <button className="board-btn" title="סיבוב לוח" onClick={() => setBoardFlipped(f => !f)}>
+                <FlipVertical2 size={14} />
+              </button>
+              <button className="board-btn" title="איפוס" onClick={reset}>
+                <RotateCcw size={14} />
+              </button>
             </div>
           </div>
 
-          {/* Board — dir ltr so RTL page doesn't mirror the squares */}
-          <div dir="ltr" style={{ width: '100%', maxWidth: 520 }}>
+          {/* Board */}
+          <div className="board-frame" dir="ltr">
             <Chessboard
               options={{
                 position: currentFen,
@@ -613,198 +630,109 @@ tick();
                 onSquareClick: onSquareClick,
                 boardOrientation: boardFlipped ? 'black' : 'white',
                 squareStyles: combinedSquareStyles,
-                boardStyle: {
-                  borderRadius: '6px',
-                  boxShadow: '0 4px 24px rgba(0,0,0,0.2)',
-                },
+                boardStyle: { borderRadius: 0 },
                 darkSquareStyle: { backgroundColor: '#769656' },
                 lightSquareStyle: { backgroundColor: '#eeeed2' },
-                animationDurationInMs: 120,
+                animationDurationInMs: 140,
               }}
             />
           </div>
 
-          {/* White captured (black pieces taken by white, shown near white) */}
-          <CapturedRow
-            pieces={whiteCaptured}
+          {/* White player strip */}
+          <PlayerStrip
+            colorSide="white"
+            captured={whiteCaptured}
             advantage={materialBalance > 0 ? materialBalance : 0}
-            side="white"
+            isActive={game.turn() === 'w' && !game.isGameOver()}
           />
 
-          {/* Navigation controls */}
-          <div className="flex items-center justify-center gap-2 mt-1">
-            <NavBtn onClick={() => goTo(-1)} disabled={currentIndex === -1} title="התחלה">
-              <ChevronsLeft size={17} />
-            </NavBtn>
-            <NavBtn onClick={() => goTo(currentIndex - 1)} disabled={currentIndex === -1} title="קודם (←)">
-              <ChevronLeft size={17} />
-            </NavBtn>
-            <span className="text-xs tabular-nums px-2" style={{ color: 'var(--color-text-muted)' }}>
-              {currentIndex + 1} / {history.length}
-            </span>
-            <NavBtn onClick={() => goTo(currentIndex + 1)} disabled={currentIndex === history.length - 1} title="הבא (→)">
-              <ChevronRight size={17} />
-            </NavBtn>
-            <NavBtn onClick={() => goTo(history.length - 1)} disabled={currentIndex === history.length - 1} title="סוף">
-              <ChevronsRight size={17} />
-            </NavBtn>
+          {/* Navigation */}
+          <div className="nav-bar">
+            <button className="nav-btn" onClick={() => goTo(-1)} disabled={currentIndex === -1} title="ראשון">
+              <ChevronsLeft size={16} />
+            </button>
+            <button className="nav-btn" onClick={() => goTo(currentIndex - 1)} disabled={currentIndex === -1} title="קודם ←">
+              <ChevronLeft size={16} />
+            </button>
+            <span className="nav-counter">{currentIndex + 1} / {history.length}</span>
+            <button className="nav-btn" onClick={() => goTo(currentIndex + 1)} disabled={currentIndex === history.length - 1} title="הבא →">
+              <ChevronRight size={16} />
+            </button>
+            <button className="nav-btn" onClick={() => goTo(history.length - 1)} disabled={currentIndex === history.length - 1} title="אחרון">
+              <ChevronsRight size={16} />
+            </button>
           </div>
-        </div>
+        </section>
 
-        {/* ── Right: Side panel ────────────────────────────────────────────── */}
-        <div className="flex flex-col gap-3 lg:w-64 w-full">
+        {/* ── Side column ──────────────────────────────────────────────── */}
+        <aside className="side-col">
 
-          {/* Move list */}
-          <Panel>
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-sm font-semibold">מהלכים</span>
-              <button
-                onClick={() => { setHistory([]); goTo(-1, []); }}
-                title="נקה מהלכים"
-                className="p-1 rounded hover:opacity-60 transition-opacity"
-              >
-                <Trash2 size={13} style={{ color: 'var(--color-text-muted)' }} />
+          {/* Move log */}
+          <div className="panel">
+            <div className="panel-header">
+              <span className="panel-title">
+                <FileText size={11} />
+                מהלכים
+              </span>
+              <button className="panel-icon-btn" onClick={() => { setHistory([]); goTo(-1, []); }} title="נקה מהלכים">
+                <Trash2 size={12} />
               </button>
             </div>
-
-            <div
-              ref={moveListRef}
-              className="overflow-y-auto flex flex-col gap-0.5"
-              style={{ maxHeight: 260, minHeight: 64 }}
-            >
+            <div className="move-log" ref={moveListRef}>
               {movePairs.length === 0 ? (
-                <p className="text-xs text-center py-5" style={{ color: 'var(--color-text-muted)' }}>
-                  גרור כלי או לחץ עליו להתחיל
-                </p>
+                <div className="move-log-empty">גרור כלי או לחץ עליו להתחיל</div>
               ) : (
                 movePairs.map(pair => (
-                  <div key={pair.number} className="flex items-center gap-0.5 text-sm font-mono">
-                    <span className="w-7 text-xs shrink-0 text-right pr-1" style={{ color: 'var(--color-text-muted)' }}>
-                      {pair.number}.
-                    </span>
+                  <div key={pair.number} className="move-row">
+                    <span className="move-num">{pair.number}.</span>
                     {pair.white && (
-                      <MoveChip
-                        san={pair.white.san}
-                        active={currentIndex === pair.white.idx}
+                      <button
+                        data-active={currentIndex === pair.white.idx}
+                        className={`move-chip${currentIndex === pair.white.idx ? ' active' : ''}`}
                         onClick={() => goTo(pair.white!.idx)}
-                      />
+                      >
+                        {pair.white.san}
+                      </button>
                     )}
                     {pair.black ? (
-                      <MoveChip
-                        san={pair.black.san}
-                        active={currentIndex === pair.black.idx}
+                      <button
+                        data-active={currentIndex === pair.black.idx}
+                        className={`move-chip${currentIndex === pair.black.idx ? ' active' : ''}`}
                         onClick={() => goTo(pair.black!.idx)}
-                      />
+                      >
+                        {pair.black.san}
+                      </button>
                     ) : (
-                      <span className="flex-1" />
+                      <span style={{ flex: 1 }} />
                     )}
                   </div>
                 ))
               )}
             </div>
-
-            {/* PGN copy */}
             {history.length > 0 && (
-              <button
-                onClick={() => copyWithFeedback(pgn, 'pgn')}
-                className="mt-2 w-full flex items-center justify-center gap-1.5 text-xs py-1.5 rounded transition-opacity hover:opacity-70"
-                style={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
-              >
-                {copied === 'pgn' ? <Check size={12} className="text-green-500" /> : <FileText size={12} />}
+              <button className="pgn-btn" onClick={() => copyWithFeedback(pgn, 'pgn')}>
+                {copied === 'pgn' ? <Check size={11} /> : <FileText size={11} />}
                 {copied === 'pgn' ? 'הועתק!' : 'העתק PGN'}
               </button>
             )}
-          </Panel>
+          </div>
 
-          {/* FEN panel */}
-          <Panel>
-            <span className="text-sm font-semibold block mb-2">עמדה (FEN)</span>
-
-            {/* Current FEN */}
-            <div className="flex items-center gap-1 mb-2">
-              <input
-                readOnly
-                value={currentFen}
-                className="flex-1 text-xs rounded px-2 py-1 font-mono truncate"
-                style={{
-                  backgroundColor: 'var(--color-surface)',
-                  border: '1px solid var(--color-border)',
-                  color: 'var(--color-text-muted)',
-                }}
-              />
-              <button
-                onClick={() => copyWithFeedback(currentFen, 'fen')}
-                title="העתק FEN"
-                className="p-1.5 rounded hover:opacity-60 transition-opacity shrink-0"
-              >
-                {copied === 'fen' ? <Check size={13} className="text-green-500" /> : <Copy size={13} style={{ color: 'var(--color-text-muted)' }} />}
-              </button>
-            </div>
-
-            {/* Load FEN input */}
-            <div className="flex gap-1 mb-1">
-              <input
-                value={fenInput}
-                onChange={e => { setFenInput(e.target.value); setFenError(''); }}
-                onKeyDown={e => e.key === 'Enter' && loadFen()}
-                placeholder="הדבק FEN לטעינת עמדה"
-                className="flex-1 text-xs rounded px-2 py-1 font-mono"
-                style={{
-                  backgroundColor: 'var(--color-surface)',
-                  border: `1px solid ${fenError ? '#ef4444' : 'var(--color-border)'}`,
-                  color: 'var(--color-text)',
-                }}
-                dir="ltr"
-              />
-              <button
-                onClick={async () => {
-                  const text = await navigator.clipboard.readText();
-                  setFenInput(text.trim());
-                  setFenError('');
-                }}
-                title="הדבק מלוח"
-                className="p-1.5 rounded hover:opacity-60 transition-opacity shrink-0"
-              >
-                <ClipboardPaste size={13} style={{ color: 'var(--color-text-muted)' }} />
-              </button>
-            </div>
-            {fenError && <p className="text-xs text-red-500 mb-1">{fenError}</p>}
-            <button
-              onClick={loadFen}
-              disabled={!fenInput.trim()}
-              className="w-full text-xs py-1.5 rounded font-medium transition-opacity disabled:opacity-35 hover:opacity-80"
-              style={{ backgroundColor: 'var(--color-blue-deep)', color: '#fff' }}
-            >
-              טען עמדה
-            </button>
-          </Panel>
-
-          {/* Live sync panel */}
-          <Panel>
-            <div className="flex items-center justify-between mb-2">
-              <span className="flex items-center gap-1.5 text-sm font-semibold">
-                <Radio size={13} style={{ color: isSyncConnected ? '#22c55e' : 'var(--color-text-muted)' }} />
-                עיקוב משחק חי
+          {/* Live sync */}
+          <div className="panel">
+            <div className="panel-header">
+              <span className="panel-title">
+                <Radio size={11} />
+                עיקוב חי
               </span>
-              <span
-                className="text-xs px-2 py-0.5 rounded-full font-medium"
-                style={{
-                  backgroundColor: isSyncConnected ? 'rgba(34,197,94,0.15)' : 'var(--color-surface)',
-                  color: isSyncConnected ? '#16a34a' : 'var(--color-text-muted)',
-                  border: '1px solid var(--color-border)',
-                }}
-              >
+              <span className={`sync-status-badge ${isSyncConnected ? 'connected' : 'waiting'}`}>
                 {isSyncConnected ? 'מחובר' : 'ממתין'}
               </span>
             </div>
-
-            <ol className="text-xs space-y-1 mb-3" style={{ color: 'var(--color-text-muted)' }}>
-              <li>1. השאר דף זה פתוח בטאב</li>
-              <li>2. גרור את הכפתור הירוק לסרגל הסימניות</li>
-              <li>3. פתח משחק ב-chess.com ולחץ על הסימנייה</li>
+            <ol className="sync-steps">
+              <li>השאר דף זה פתוח בטאב</li>
+              <li>גרור את הכפתור לסרגל הסימניות</li>
+              <li>פתח chess.com ולחץ על הסימנייה</li>
             </ol>
-
-            {/* Bookmarklet drag target — href set via ref to bypass React's javascript: sanitization */}
             <a
               ref={bookmarkletAnchorRef}
               onClick={e => e.preventDefault()}
@@ -814,45 +742,70 @@ tick();
                 e.dataTransfer.setData('text/plain', bookmarkletUrl);
                 e.dataTransfer.effectAllowed = 'copyLink';
               }}
-              className="flex items-center justify-center gap-1.5 w-full text-xs py-2 px-3 rounded-lg font-semibold mb-2 select-none"
-              style={{
-                backgroundColor: '#16a34a',
-                color: '#fff',
-                cursor: 'grab',
-                border: '2px dashed rgba(255,255,255,0.35)',
-                textDecoration: 'none',
-              }}
+              className="bookmarklet-btn"
               title="גרור לסרגל הסימניות"
             >
-              ♟ Chess Mentor — גרור לסרגל
+              <span>⬆</span>
+              <span>Chess Mentor — גרור לסרגל</span>
             </a>
-
-            <button
-              onClick={() => setSyncEnabled(v => !v)}
-              className="w-full text-xs py-1.5 rounded-lg transition-opacity hover:opacity-70"
-              style={{
-                backgroundColor: syncEnabled ? 'var(--color-surface)' : 'var(--color-blue-deep)',
-                color: syncEnabled ? 'var(--color-text-muted)' : '#fff',
-                border: '1px solid var(--color-border)',
-              }}
-            >
+            <button className="sync-toggle-btn" onClick={() => setSyncEnabled(v => !v)}>
               {syncEnabled ? 'השהה עיקוב' : 'חדש עיקוב'}
             </button>
-          </Panel>
-
-          {/* Tips */}
-          <div
-            className="p-3 rounded-xl text-xs"
-            style={{ backgroundColor: 'var(--color-blue)', border: '1px solid var(--color-border)' }}
-          >
-            <p className="font-semibold mb-1.5" style={{ color: 'var(--color-blue-deep)' }}>קיצורי מקלדת:</p>
-            <div className="space-y-0.5" style={{ color: 'var(--color-text)' }}>
-              <p><kbd className="font-mono font-bold">←</kbd> / <kbd className="font-mono font-bold">→</kbd> — ניווט מהלכים</p>
-              <p><kbd className="font-mono font-bold">Home</kbd> / <kbd className="font-mono font-bold">End</kbd> — ראשון / אחרון</p>
-              <p>לחץ על כלי לראות מהלכים אפשריים</p>
-            </div>
           </div>
-        </div>
+
+          {/* Position (FEN) */}
+          <div className="panel">
+            <div className="panel-header">
+              <span className="panel-title">
+                <Copy size={11} />
+                עמדה
+              </span>
+            </div>
+            <div className="fen-row">
+              <div className="fen-display" dir="ltr">{currentFen}</div>
+              <button
+                className="fen-icon-btn"
+                onClick={() => copyWithFeedback(currentFen, 'fen')}
+                title="העתק FEN"
+              >
+                {copied === 'fen' ? <Check size={12} style={{ color: 'var(--green)' }} /> : <Copy size={12} />}
+              </button>
+            </div>
+            <div className="fen-paste-area">
+              <input
+                value={fenInput}
+                onChange={e => { setFenInput(e.target.value); setFenError(''); }}
+                onKeyDown={e => e.key === 'Enter' && loadFen()}
+                placeholder="הדבק FEN..."
+                className={`fen-input${fenError ? ' error' : ''}`}
+                dir="ltr"
+              />
+              <button
+                className="fen-icon-btn"
+                onClick={async () => {
+                  const text = await navigator.clipboard.readText();
+                  setFenInput(text.trim());
+                  setFenError('');
+                }}
+                title="הדבק מלוח"
+              >
+                <ClipboardPaste size={12} />
+              </button>
+            </div>
+            {fenError && <p className="fen-error">{fenError}</p>}
+            <button className="load-btn" onClick={loadFen} disabled={!fenInput.trim()}>
+              טען עמדה
+            </button>
+          </div>
+
+          {/* Shortcuts */}
+          <div className="shortcuts-hint">
+            <kbd>←</kbd> <kbd>→</kbd> ניווט מהלכים
+            <br />
+            <kbd>Home</kbd> <kbd>End</kbd> ראשון / אחרון
+          </div>
+
+        </aside>
       </div>
     </div>
   );
@@ -860,46 +813,25 @@ tick();
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function Panel({ children }: { children: React.ReactNode }) {
+function PlayerStrip({
+  colorSide, captured, advantage, isActive,
+}: {
+  colorSide: 'white' | 'black';
+  captured: string[];
+  advantage: number;
+  isActive: boolean;
+}) {
   return (
-    <div
-      className="p-3 rounded-xl"
-      style={{
-        backgroundColor: 'var(--color-surface-card)',
-        border: '1px solid var(--color-border)',
-      }}
-    >
-      {children}
+    <div className={`player-strip${isActive ? ' active-turn' : ''}`}>
+      <div className={`player-color-dot ${colorSide}`} />
+      <span className="player-label">{colorSide === 'white' ? 'לבן' : 'שחור'}</span>
+      <div className="player-captured">
+        {captured.map((p, i) => (
+          <span key={i} style={{ opacity: 0.8 }}>{PIECE_SYMBOLS[p] ?? p}</span>
+        ))}
+      </div>
+      {advantage > 0 && <span className="player-advantage">+{advantage}</span>}
     </div>
-  );
-}
-
-function IconBtn({ children, onClick, title }: { children: React.ReactNode; onClick: () => void; title?: string }) {
-  return (
-    <button
-      onClick={onClick}
-      title={title}
-      className="p-2 rounded-lg hover:opacity-60 transition-opacity"
-      style={{ backgroundColor: 'var(--color-surface-card)', border: '1px solid var(--color-border)' }}
-    >
-      {children}
-    </button>
-  );
-}
-
-function NavBtn({
-  children, onClick, disabled, title,
-}: { children: React.ReactNode; onClick: () => void; disabled: boolean; title?: string }) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      className="p-2 rounded-lg transition-opacity disabled:opacity-25 hover:opacity-60"
-      style={{ backgroundColor: 'var(--color-surface-card)', border: '1px solid var(--color-border)' }}
-    >
-      {children}
-    </button>
   );
 }
 
@@ -908,11 +840,7 @@ function MoveChip({ san, active, onClick }: { san: string; active: boolean; onCl
     <button
       data-active={active}
       onClick={onClick}
-      className="flex-1 px-1.5 py-0.5 rounded text-xs font-mono text-left transition-colors"
-      style={{
-        backgroundColor: active ? 'var(--color-blue-deep)' : 'transparent',
-        color: active ? '#fff' : 'var(--color-text)',
-      }}
+      className={`move-chip${active ? ' active' : ''}`}
     >
       {san}
     </button>
@@ -922,10 +850,10 @@ function MoveChip({ san, active, onClick }: { san: string; active: boolean; onCl
 function CapturedRow({
   pieces = [], advantage, side,
 }: { pieces?: string[]; advantage: number; side: 'white' | 'black' }) {
-  if (!pieces || (pieces.length === 0 && advantage === 0)) return <div className="h-5" />;
+  if (!pieces || (pieces.length === 0 && advantage === 0)) return <div style={{ height: 20 }} />;
   return (
-    <div className="flex items-center gap-1 h-5 overflow-hidden">
-      <span className="text-base leading-none">
+    <div style={{ display: 'flex', alignItems: 'center', gap: 4, height: 20, overflow: 'hidden' }}>
+      <span style={{ fontSize: 14, lineHeight: 1 }}>
         {pieces.map((p, i) => (
           <span key={i} style={{ opacity: side === 'white' ? 0.9 : 0.75 }}>
             {PIECE_SYMBOLS[p] ?? p}
@@ -933,9 +861,7 @@ function CapturedRow({
         ))}
       </span>
       {advantage > 0 && (
-        <span className="text-xs font-bold" style={{ color: 'var(--color-text-muted)' }}>
-          +{advantage}
-        </span>
+        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--gold)' }}>+{advantage}</span>
       )}
     </div>
   );
