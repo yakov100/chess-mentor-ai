@@ -188,6 +188,14 @@ export default function App() {
   // ── Name this window so the bookmarklet can target the existing tab ───────
   useEffect(() => {
     window.name = 'chess-mentor-ai';
+    // Signal to the bookmarklet (running on chess.com) that we're ready to receive
+    try {
+      if (window.opener) {
+        window.opener.postMessage({ type: 'chess-mentor-ready' }, '*');
+      }
+    } catch {
+      // cross-origin opener access may be restricted
+    }
   }, []);
 
   // ── Allow blocked-popup fallback links to open a captured Chess.com FEN ───
@@ -403,8 +411,12 @@ function send(f){
 }
 function tick(){
   var f=dom()||api();
-  if(f&&f!==last){last=f;send(f);}
+  if(f){last=f;send(f);}
 }
+// Re-send immediately when chess-mentor-ai signals it's ready
+window.addEventListener('message',function(e){
+  if(e.data&&e.data.type==='chess-mentor-ready'){last=null;tick();}
+});
 function start(){
   if(timer)return;
   tick();
