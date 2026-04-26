@@ -8,7 +8,6 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
-  Trash2,
   Copy,
   ClipboardPaste,
   Sun,
@@ -39,10 +38,13 @@ const PIECE_VALUES: Record<string, number> = {
   p: 1, n: 3, b: 3, r: 5, q: 9, k: 0,
 };
 
+const PIECE_SYMBOLS: Record<string, string> = {
+  P: '♙', N: '♘', B: '♗', R: '♖', Q: '♕',
+  p: '♟', n: '♞', b: '♝', r: '♜', q: '♛',
+};
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-// whiteCaptured = black pieces that white has taken (shown next to white)
-// blackCaptured = white pieces that black has taken (shown next to black)
 function getCapturedPieces(fen: string): { whiteCaptured: string[]; blackCaptured: string[] } {
   const START: Record<string, number> = { p: 8, n: 2, b: 2, r: 2, q: 1 };
   const onBoard: Record<string, number> = {};
@@ -51,8 +53,8 @@ function getCapturedPieces(fen: string): { whiteCaptured: string[]; blackCapture
       onBoard[ch] = (onBoard[ch] || 0) + 1;
     }
   }
-  const whiteCaptured: string[] = []; // black pieces taken by white
-  const blackCaptured: string[] = []; // white pieces taken by black
+  const whiteCaptured: string[] = [];
+  const blackCaptured: string[] = [];
   for (const [p, start] of Object.entries(START)) {
     const blackMissing = start - (onBoard[p] || 0);
     const whiteMissing = start - (onBoard[p.toUpperCase()] || 0);
@@ -72,31 +74,6 @@ function getMaterialBalance(fen: string): number {
   return balance;
 }
 
-function formatMoveList(
-  history: HistoryEntry[],
-): Array<{ number: number; white?: HistoryEntry & { idx: number }; black?: HistoryEntry & { idx: number } }> {
-  const pairs: Array<{
-    number: number;
-    white?: HistoryEntry & { idx: number };
-    black?: HistoryEntry & { idx: number };
-  }> = [];
-
-  history.forEach((entry, idx) => {
-    if (entry.color === 'w') {
-      pairs.push({ number: entry.moveNumber, white: { ...entry, idx } });
-    } else {
-      const last = pairs[pairs.length - 1];
-      if (last && last.black === undefined) {
-        last.black = { ...entry, idx };
-      } else {
-        pairs.push({ number: entry.moveNumber, black: { ...entry, idx } });
-      }
-    }
-  });
-
-  return pairs;
-}
-
 function buildPgn(history: HistoryEntry[], startFen: string): string {
   let pgn = '';
   if (startFen !== INITIAL_FEN) pgn += `[FEN "${startFen}"]\n\n`;
@@ -112,15 +89,6 @@ function buildPgn(history: HistoryEntry[], startFen: string): string {
   return pgn.trim();
 }
 
-const PIECE_SYMBOLS: Record<string, string> = {
-  P: '♙', N: '♘', B: '♗', R: '♖', Q: '♕',
-  p: '♟', n: '♞', b: '♝', r: '♜', q: '♛',
-};
-
-// Compare FEN positions by board layout + active turn only.
-// Ignores castling rights, en passant, and move counters so that the
-// simplified FENs produced by the bookmarklet (which cannot infer these)
-// still match the accurate FENs maintained by chess.js.
 function normalizeFen(fen: string): string {
   return fen.split(' ').slice(0, 2).join(' ');
 }
@@ -131,7 +99,6 @@ function getInitialFenFromUrl(): string {
   const fenFromHash = url.hash.startsWith('#fen=') ? decodeURIComponent(url.hash.slice(5)) : null;
   const incoming = fenFromQuery || fenFromHash;
   if (!incoming) return INITIAL_FEN;
-
   try {
     return new Chess(incoming).fen();
   } catch {
@@ -139,8 +106,6 @@ function getInitialFenFromUrl(): string {
   }
 }
 
-// If incomingFen is reachable from fromFen via exactly one legal move, return
-// that move's from/to squares. Returns null otherwise.
 function findMoveForFen(fromFen: string, incomingFen: string): { from: string; to: string } | null {
   const normalizedTarget = normalizeFen(incomingFen);
   try {
@@ -182,13 +147,12 @@ export default function App() {
   const [isSyncConnected, setIsSyncConnected] = useState(false);
   const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const moveListRef = useRef<HTMLDivElement>(null);
+  const tickerRef = useRef<HTMLDivElement>(null);
   const bookmarkletAnchorRef = useRef<HTMLAnchorElement>(null);
 
-  // ── Name this window so the bookmarklet can target the existing tab ───────
+  // ── Window name for bookmarklet targeting ─────────────────────────────────
   useEffect(() => {
     window.name = 'chess-mentor-ai';
-    // Signal to the bookmarklet (running on chess.com) that we're ready to receive
     try {
       if (window.opener) {
         window.opener.postMessage({ type: 'chess-mentor-ready' }, '*');
@@ -198,14 +162,13 @@ export default function App() {
     }
   }, []);
 
-  // ── Allow blocked-popup fallback links to open a captured Chess.com FEN ───
+  // ── FEN from URL (popup fallback) ─────────────────────────────────────────
   useEffect(() => {
     const url = new URL(window.location.href);
     const fenFromQuery = url.searchParams.get('fen');
     const fenFromHash = url.hash.startsWith('#fen=') ? decodeURIComponent(url.hash.slice(5)) : null;
     const incoming = fenFromQuery || fenFromHash;
     if (!incoming) return;
-
     try {
       const game = new Chess(incoming);
       const validated = game.fen();
@@ -224,21 +187,20 @@ export default function App() {
     }
   }, []);
 
-  // ── Sync dark/light mode ──────────────────────────────────────────────────
+  // ── Dark / light mode ─────────────────────────────────────────────────────
   useEffect(() => {
     document.documentElement.classList.toggle('light', !dark);
   }, [dark]);
 
-  // ── Auto-scroll move list ─────────────────────────────────────────────────
+  // ── Auto-scroll ticker to active chip ────────────────────────────────────
   useEffect(() => {
-    if (moveListRef.current) {
-      const active = moveListRef.current.querySelector('[data-active="true"]');
-      active?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    if (tickerRef.current) {
+      const active = tickerRef.current.querySelector<HTMLElement>('[data-active="true"]');
+      active?.scrollIntoView({ inline: 'nearest', behavior: 'smooth', block: 'nearest' });
     }
   }, [currentIndex]);
 
   // ── Navigate to a history index ───────────────────────────────────────────
-  // Defined FIRST so keyboard handler can reference it safely
   const goTo = useCallback(
     (index: number, hist: HistoryEntry[] = history) => {
       const clamped = Math.max(-1, Math.min(hist.length - 1, index));
@@ -252,8 +214,8 @@ export default function App() {
         const entry = hist[clamped];
         setCurrentFen(entry.fen);
         setHighlightSquares({
-          [entry.from]: { backgroundColor: 'rgba(255, 214, 0, 0.45)' },
-          [entry.to]: { backgroundColor: 'rgba(255, 214, 0, 0.45)' },
+          [entry.from]: { backgroundColor: 'rgba(0,229,255,0.35)' },
+          [entry.to]: { backgroundColor: 'rgba(0,229,255,0.35)' },
         });
       }
     },
@@ -273,15 +235,9 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKey);
   }, [goTo, currentIndex, history.length]);
 
-  // ── Bookmarklet URL (generated once from current page URL) ───────────────
+  // ── Bookmarklet URL ───────────────────────────────────────────────────────
   const bookmarkletUrl = useMemo(() => {
     const targetUrl = window.location.href.split('?')[0].split('#')[0];
-
-    // Two-layer FEN extraction strategy:
-    //  Layer 1 (dom): read piece positions from .piece.square-XY elements —
-    //    this reflects the board the user is actually seeing on chess.com.
-    //  Layer 2 (api): call chess.com's internal JS game object only if DOM
-    //    extraction fails. Internal API state can be stale on some pages.
     const script = `(function(){
 var u=${JSON.stringify(targetUrl)};
 var w=null,last=null,timer=null;
@@ -363,11 +319,7 @@ function pieces(){
   return null;
 }
 function turn(){
-  var ss=[
-    '[data-ply]','vertical-move-list .move',
-    '.node-highlight-content','.move-text-component',
-    '.moves-list-row','.move'
-  ];
+  var ss=['[data-ply]','vertical-move-list .move','.node-highlight-content','.move-text-component','.moves-list-row','.move'];
   for(var i=0;i<ss.length;i++){
     var n=document.querySelectorAll(ss[i]);
     if(n&&n.length>0)return n.length%2===0?'w':'b';
@@ -413,7 +365,6 @@ function tick(){
   var f=dom()||api();
   if(f){last=f;send(f);}
 }
-// Re-send immediately when chess-mentor-ai signals it's ready
 window.addEventListener('message',function(e){
   if(e.data&&e.data.type==='chess-mentor-ready'){last=null;tick();}
 });
@@ -427,14 +378,14 @@ if(connect())start();else showBlocked();
     return `javascript:${encodeURIComponent(script)}`;
   }, []);
 
-  // ── Bypass React's javascript: URL sanitization by setting href via DOM ref ─
+  // ── Bypass React's javascript: URL sanitization ───────────────────────────
   useEffect(() => {
     if (bookmarkletAnchorRef.current) {
       bookmarkletAnchorRef.current.setAttribute('href', bookmarkletUrl);
     }
   }, [bookmarkletUrl]);
 
-  // ── Internal: apply a chess.js Move and update state ─────────────────────
+  // ── Apply a chess.js move and update state ────────────────────────────────
   const applyMove = useCallback(
     (game: Chess, from: string, to: string) => {
       const pieceType = game.get(from as Parameters<typeof game.get>[0])?.type ?? '';
@@ -445,27 +396,23 @@ if(connect())start();else showBlocked();
       const move = game.move({ from, to, promotion: isPromotion ? 'q' : undefined });
       if (!move) return false;
 
+      const chess2 = new Chess(currentFen);
       const newEntry: HistoryEntry = {
         fen: game.fen(),
         san: move.san,
-        moveNumber: move.color === 'w' ? game.moveNumber() - 1 : game.moveNumber() - 1,
+        moveNumber: chess2.moveNumber(),
         color: move.color as 'w' | 'b',
         from: move.from,
         to: move.to,
       };
-
-      // Fix move number: after white moves, fullMoveNumber incremented for black's turn,
-      // we want the move number at time of move
-      const chess2 = new Chess(currentFen);
-      newEntry.moveNumber = chess2.moveNumber();
 
       const newHistory = [...history.slice(0, currentIndex + 1), newEntry];
       setHistory(newHistory);
       setSelectedSquare(null);
       setLegalMoveSquares({});
       setHighlightSquares({
-        [move.from]: { backgroundColor: 'rgba(255, 214, 0, 0.45)' },
-        [move.to]: { backgroundColor: 'rgba(255, 214, 0, 0.45)' },
+        [move.from]: { backgroundColor: 'rgba(0,229,255,0.35)' },
+        [move.to]: { backgroundColor: 'rgba(0,229,255,0.35)' },
       });
       goTo(newHistory.length - 1, newHistory);
       return true;
@@ -473,7 +420,7 @@ if(connect())start();else showBlocked();
     [currentFen, currentIndex, history, goTo],
   );
 
-  // ── Live sync: postMessage listener + same-origin tab relay ───────────────
+  // ── Live sync ─────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!syncEnabled) {
       if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
@@ -487,15 +434,12 @@ if(connect())start();else showBlocked();
         : new BroadcastChannel('chess-mentor-ai-sync');
 
     const applyIncomingFen = (incoming: string) => {
-      // Mark as connected and reset the connection-lost timer
       setIsSyncConnected(true);
       if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
       syncTimeoutRef.current = setTimeout(() => setIsSyncConnected(false), 3000);
 
-      // Ignore if already at this position
       if (normalizeFen(incoming) === normalizeFen(currentFen)) return;
 
-      // Case 1: incoming FEN is exactly one legal move ahead — apply it
       const found = findMoveForFen(currentFen, incoming);
       if (found) {
         const game = new Chess(currentFen);
@@ -503,7 +447,6 @@ if(connect())start();else showBlocked();
         return;
       }
 
-      // Case 2: completely different position — load as fresh start FEN
       try {
         const g = new Chess(incoming);
         const validated = g.fen();
@@ -540,7 +483,7 @@ if(connect())start();else showBlocked();
     };
   }, [syncEnabled, currentFen, applyMove]);
 
-  // ── Drag-and-drop handler ─────────────────────────────────────────────────
+  // ── Drag-and-drop ─────────────────────────────────────────────────────────
   const onDrop = useCallback(
     ({ sourceSquare, targetSquare }: { sourceSquare: string; targetSquare: string | null; piece: { pieceType: string } }): boolean => {
       if (!targetSquare) return false;
@@ -555,9 +498,9 @@ if(connect())start();else showBlocked();
     ({ square }: { square: string; piece: { pieceType: string } | null }) => {
       const game = new Chess(currentFen);
 
-      // If a piece is already selected
       if (selectedSquare) {
-        const legalTargets = game.moves({ square: selectedSquare as Parameters<typeof game.moves>[0]['square'], verbose: true })
+        const legalTargets = game
+          .moves({ square: selectedSquare as Parameters<typeof game.moves>[0]['square'], verbose: true })
           .map(m => m.to);
 
         if ((legalTargets as string[]).includes(square)) {
@@ -566,19 +509,18 @@ if(connect())start();else showBlocked();
         }
       }
 
-      // Select piece if it belongs to the current player
       const piece = game.get(square as Parameters<typeof game.get>[0]);
       if (piece && piece.color === game.turn()) {
         setSelectedSquare(square);
         const moves = game.moves({ square: square as Parameters<typeof game.moves>[0]['square'], verbose: true });
         const styles: SquareStyles = {
-          [square]: { backgroundColor: 'rgba(99,132,255,0.35)' },
+          [square]: { backgroundColor: 'rgba(0,229,255,0.28)' },
         };
         moves.forEach(m => {
           styles[m.to] = {
             background: game.get(m.to as Parameters<typeof game.get>[0])
-              ? 'radial-gradient(circle, rgba(220,50,50,0.45) 60%, transparent 62%)'
-              : 'radial-gradient(circle, rgba(0,0,0,0.25) 25%, transparent 27%)',
+              ? 'radial-gradient(circle, rgba(255,80,50,0.5) 60%, transparent 62%)'
+              : 'radial-gradient(circle, rgba(0,229,255,0.3) 28%, transparent 30%)',
             borderRadius: '50%',
           };
         });
@@ -635,89 +577,76 @@ if(connect())start();else showBlocked();
   // ── Derived state ─────────────────────────────────────────────────────────
   const game = new Chess(currentFen);
   const gameStatus = (() => {
-    if (game.isCheckmate()) return { label: 'מט!', color: '#ef4444' };
+    if (game.isCheckmate()) return { label: 'מט!', color: '#f87171' };
     if (game.isStalemate()) return { label: 'פאט', color: '#eab308' };
     if (game.isDraw()) return { label: 'תיקו', color: '#eab308' };
-    if (game.isCheck()) return { label: `שאח! תור ${game.turn() === 'w' ? 'לבן' : 'שחור'}`, color: '#f97316' };
+    if (game.isCheck()) return { label: `שאח! תור ${game.turn() === 'w' ? 'לבן' : 'שחור'}`, color: '#ff6b35' };
     return {
       label: game.turn() === 'w' ? '♙ תור לבן' : '♟ תור שחור',
-      color: 'var(--color-text-muted)',
+      color: 'var(--text-2)',
     };
   })();
 
-  const movePairs = formatMoveList(history);
   const pgn = buildPgn(history, startFen);
   const { whiteCaptured, blackCaptured } = getCapturedPieces(currentFen);
   const materialBalance = getMaterialBalance(currentFen);
-
   const combinedSquareStyles: SquareStyles = { ...highlightSquares, ...legalMoveSquares };
 
   // ─── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="app-root">
+    <div className="shell">
 
-      {/* ── Header ────────────────────────────────────────────────────── */}
-      <header className="app-header">
-        <div className="app-logo">
-          <span className="logo-king">♚</span>
-          <div className="logo-wordmark">
-            <span className="logo-title">Chess Mentor</span>
-            <span className="logo-sub">ניתוח עמדה</span>
+      {/* ══ HEADER ══════════════════════════════════════════════════════ */}
+      <header className="hdr">
+        <div className="hdr-logo">
+          <span className="hdr-king">♚</span>
+          <div>
+            <span className="hdr-name">Chess Mentor</span>
+            <span className="hdr-sub">ניתוח עמדה</span>
           </div>
         </div>
-        <div className="header-right">
+        <div className="hdr-right">
           {isSyncConnected && (
-            <div className="live-badge">
-              <div className="live-dot">
-                <div className="live-dot-core" />
+            <div className="live-pill">
+              <div className="live-ring-wrap">
+                <div className="live-ring" />
+                <div className="live-core" />
               </div>
               LIVE
             </div>
           )}
-          <button className="theme-btn" onClick={() => setDark(d => !d)} title={dark ? 'מצב בהיר' : 'מצב כהה'}>
-            {dark ? <Sun size={15} /> : <Moon size={15} />}
+          <button
+            className="icon-btn"
+            onClick={() => setDark(d => !d)}
+            title={dark ? 'מצב בהיר' : 'מצב כהה'}
+          >
+            {dark ? <Sun size={13} /> : <Moon size={13} />}
           </button>
         </div>
       </header>
 
-      {/* ── Body ──────────────────────────────────────────────────────── */}
-      <div className="app-body">
+      {/* ══ MIDDLE ══════════════════════════════════════════════════════ */}
+      <div className="mid">
 
-        {/* ── Board column ─────────────────────────────────────────────── */}
-        <section className="board-col">
+        {/* ── Board zone ──────────────────────────────────────────────── */}
+        <div className="board-zone">
 
-          {/* Black player strip */}
-          <PlayerStrip
-            colorSide="black"
-            captured={blackCaptured}
-            advantage={materialBalance < 0 ? Math.abs(materialBalance) : 0}
-            isActive={game.turn() === 'b' && !game.isGameOver()}
-          />
-
-          {/* Status + action buttons */}
-          <div className="status-bar">
-            <span
-              className="status-chip"
-              style={{
-                color: gameStatus.color,
-                background: `${gameStatus.color}18`,
-                borderColor: `${gameStatus.color}30`,
-              }}
-            >
-              {gameStatus.label}
-            </span>
-            <div className="board-btn-group">
-              <button className="board-btn" title="סיבוב לוח" onClick={() => setBoardFlipped(f => !f)}>
-                <FlipVertical2 size={14} />
-              </button>
-              <button className="board-btn" title="איפוס" onClick={reset}>
-                <RotateCcw size={14} />
-              </button>
+          {/* Black player */}
+          <div className={`player-bar${game.turn() === 'b' && !game.isGameOver() ? ' player-bar--active' : ''}`}>
+            <div className="player-pip player-pip--black" />
+            <span className="player-name">שחור</span>
+            <div className="player-caps">
+              {blackCaptured.map((p, i) => (
+                <span key={i}>{PIECE_SYMBOLS[p] ?? p}</span>
+              ))}
             </div>
+            {materialBalance < 0 && (
+              <span className="player-adv">+{Math.abs(materialBalance)}</span>
+            )}
           </div>
 
           {/* Board */}
-          <div className="board-frame" dir="ltr">
+          <div className="board-wrap" dir="ltr">
             <Chessboard
               options={{
                 position: currentFen,
@@ -726,108 +655,66 @@ if(connect())start();else showBlocked();
                 boardOrientation: boardFlipped ? 'black' : 'white',
                 squareStyles: combinedSquareStyles,
                 boardStyle: { borderRadius: 0 },
-                darkSquareStyle: { backgroundColor: '#769656' },
-                lightSquareStyle: { backgroundColor: '#eeeed2' },
-                animationDurationInMs: 140,
+                darkSquareStyle: { backgroundColor: '#5d8a68' },
+                lightSquareStyle: { backgroundColor: '#e8ead6' },
+                animationDurationInMs: 120,
               }}
             />
           </div>
 
-          {/* White player strip */}
-          <PlayerStrip
-            colorSide="white"
-            captured={whiteCaptured}
-            advantage={materialBalance > 0 ? materialBalance : 0}
-            isActive={game.turn() === 'w' && !game.isGameOver()}
-          />
-
-          {/* Navigation */}
-          <div className="nav-bar">
-            <button className="nav-btn" onClick={() => goTo(-1)} disabled={currentIndex === -1} title="ראשון">
-              <ChevronsLeft size={16} />
-            </button>
-            <button className="nav-btn" onClick={() => goTo(currentIndex - 1)} disabled={currentIndex === -1} title="קודם ←">
-              <ChevronLeft size={16} />
-            </button>
-            <span className="nav-counter">{currentIndex + 1} / {history.length}</span>
-            <button className="nav-btn" onClick={() => goTo(currentIndex + 1)} disabled={currentIndex === history.length - 1} title="הבא →">
-              <ChevronRight size={16} />
-            </button>
-            <button className="nav-btn" onClick={() => goTo(history.length - 1)} disabled={currentIndex === history.length - 1} title="אחרון">
-              <ChevronsRight size={16} />
-            </button>
-          </div>
-        </section>
-
-        {/* ── Side column ──────────────────────────────────────────────── */}
-        <aside className="side-col">
-
-          {/* Move log */}
-          <div className="panel">
-            <div className="panel-header">
-              <span className="panel-title">
-                <FileText size={11} />
-                מהלכים
-              </span>
-              <button className="panel-icon-btn" onClick={() => { setHistory([]); goTo(-1, []); }} title="נקה מהלכים">
-                <Trash2 size={12} />
-              </button>
+          {/* White player */}
+          <div className={`player-bar${game.turn() === 'w' && !game.isGameOver() ? ' player-bar--active' : ''}`}>
+            <div className="player-pip player-pip--white" />
+            <span className="player-name">לבן</span>
+            <div className="player-caps">
+              {whiteCaptured.map((p, i) => (
+                <span key={i}>{PIECE_SYMBOLS[p] ?? p}</span>
+              ))}
             </div>
-            <div className="move-log" ref={moveListRef}>
-              {movePairs.length === 0 ? (
-                <div className="move-log-empty">גרור כלי או לחץ עליו להתחיל</div>
-              ) : (
-                movePairs.map(pair => (
-                  <div key={pair.number} className="move-row">
-                    <span className="move-num">{pair.number}.</span>
-                    {pair.white && (
-                      <button
-                        data-active={currentIndex === pair.white.idx}
-                        className={`move-chip${currentIndex === pair.white.idx ? ' active' : ''}`}
-                        onClick={() => goTo(pair.white!.idx)}
-                      >
-                        {pair.white.san}
-                      </button>
-                    )}
-                    {pair.black ? (
-                      <button
-                        data-active={currentIndex === pair.black.idx}
-                        className={`move-chip${currentIndex === pair.black.idx ? ' active' : ''}`}
-                        onClick={() => goTo(pair.black!.idx)}
-                      >
-                        {pair.black.san}
-                      </button>
-                    ) : (
-                      <span style={{ flex: 1 }} />
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-            {history.length > 0 && (
-              <button className="pgn-btn" onClick={() => copyWithFeedback(pgn, 'pgn')}>
-                {copied === 'pgn' ? <Check size={11} /> : <FileText size={11} />}
-                {copied === 'pgn' ? 'הועתק!' : 'העתק PGN'}
-              </button>
+            {materialBalance > 0 && (
+              <span className="player-adv">+{materialBalance}</span>
             )}
           </div>
 
-          {/* Live sync */}
-          <div className="panel">
-            <div className="panel-header">
-              <span className="panel-title">
-                <Radio size={11} />
-                עיקוב חי
-              </span>
-              <span className={`sync-status-badge ${isSyncConnected ? 'connected' : 'waiting'}`}>
+          {/* Status + board controls */}
+          <div className="ctrl-row">
+            <span
+              className="status-pill"
+              style={{
+                color: gameStatus.color,
+                background: `${gameStatus.color}18`,
+                borderColor: `${gameStatus.color}30`,
+                border: '1px solid',
+              }}
+            >
+              {gameStatus.label}
+            </span>
+            <button className="icon-btn" title="סיבוב לוח" onClick={() => setBoardFlipped(f => !f)}>
+              <FlipVertical2 size={13} />
+            </button>
+            <button className="icon-btn" title="איפוס" onClick={reset}>
+              <RotateCcw size={13} />
+            </button>
+          </div>
+        </div>
+
+        {/* ── Side panel ──────────────────────────────────────────────── */}
+        <aside className="side">
+
+          {/* Sync section */}
+          <section className="side-sec">
+            <header className="sec-hdr">
+              <Radio size={10} />
+              עיקוב חי
+              <span className={`sec-badge ${isSyncConnected ? 'sec-badge--on' : 'sec-badge--off'}`}>
                 {isSyncConnected ? 'מחובר' : 'ממתין'}
               </span>
-            </div>
-            <ol className="sync-steps">
+            </header>
+            <ol className="steps">
               <li>השאר דף זה פתוח בטאב</li>
               <li>גרור את הכפתור לסרגל הסימניות</li>
               <li>פתח chess.com ולחץ על הסימנייה</li>
-              <li>אם מופיע כפתור חיבור ב-chess.com, לחץ עליו פעם אחת</li>
+              <li>אם מופיע כפתור חיבור, לחץ עליו פעם אחת</li>
             </ol>
             <a
               ref={bookmarkletAnchorRef}
@@ -838,46 +725,46 @@ if(connect())start();else showBlocked();
                 e.dataTransfer.setData('text/plain', bookmarkletUrl);
                 e.dataTransfer.effectAllowed = 'copyLink';
               }}
-              className="bookmarklet-btn"
+              className="bm-btn"
               title="גרור לסרגל הסימניות"
             >
               <span>⬆</span>
               <span>Chess Mentor — גרור לסרגל</span>
             </a>
-            <button className="sync-toggle-btn" onClick={() => setSyncEnabled(v => !v)}>
+            <button className="txt-btn" onClick={() => setSyncEnabled(v => !v)}>
               {syncEnabled ? 'השהה עיקוב' : 'חדש עיקוב'}
             </button>
-          </div>
+          </section>
 
-          {/* Position (FEN) */}
-          <div className="panel">
-            <div className="panel-header">
-              <span className="panel-title">
-                <Copy size={11} />
-                עמדה
-              </span>
-            </div>
+          {/* FEN / position section */}
+          <section className="side-sec">
+            <header className="sec-hdr">
+              <Copy size={10} />
+              עמדה
+            </header>
             <div className="fen-row">
               <div className="fen-display" dir="ltr">{currentFen}</div>
               <button
-                className="fen-icon-btn"
+                className="icon-btn-sm"
                 onClick={() => copyWithFeedback(currentFen, 'fen')}
                 title="העתק FEN"
               >
-                {copied === 'fen' ? <Check size={12} style={{ color: 'var(--green)' }} /> : <Copy size={12} />}
+                {copied === 'fen'
+                  ? <Check size={11} style={{ color: 'var(--green)' }} />
+                  : <Copy size={11} />}
               </button>
             </div>
-            <div className="fen-paste-area">
+            <div className="fen-paste-row">
               <input
                 value={fenInput}
                 onChange={e => { setFenInput(e.target.value); setFenError(''); }}
                 onKeyDown={e => e.key === 'Enter' && loadFen()}
                 placeholder="הדבק FEN..."
-                className={`fen-input${fenError ? ' error' : ''}`}
+                className={`fen-in${fenError ? ' fen-in--err' : ''}`}
                 dir="ltr"
               />
               <button
-                className="fen-icon-btn"
+                className="icon-btn-sm"
                 onClick={async () => {
                   const text = await navigator.clipboard.readText();
                   setFenInput(text.trim());
@@ -885,17 +772,17 @@ if(connect())start();else showBlocked();
                 }}
                 title="הדבק מלוח"
               >
-                <ClipboardPaste size={12} />
+                <ClipboardPaste size={11} />
               </button>
             </div>
-            {fenError && <p className="fen-error">{fenError}</p>}
+            {fenError && <p className="fen-err">{fenError}</p>}
             <button className="load-btn" onClick={loadFen} disabled={!fenInput.trim()}>
               טען עמדה
             </button>
-          </div>
+          </section>
 
-          {/* Shortcuts */}
-          <div className="shortcuts-hint">
+          {/* Keyboard shortcuts hint */}
+          <div className="kbd-hint">
             <kbd>←</kbd> <kbd>→</kbd> ניווט מהלכים
             <br />
             <kbd>Home</kbd> <kbd>End</kbd> ראשון / אחרון
@@ -903,62 +790,53 @@ if(connect())start();else showBlocked();
 
         </aside>
       </div>
-    </div>
-  );
-}
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
+      {/* ══ TICKER BAR ══════════════════════════════════════════════════ */}
+      <div className="ticker-bar">
+        <button className="nav-btn" onClick={() => goTo(-1)} disabled={currentIndex === -1} title="ראשון">
+          <ChevronsLeft size={14} />
+        </button>
+        <button className="nav-btn" onClick={() => goTo(currentIndex - 1)} disabled={currentIndex === -1} title="קודם">
+          <ChevronLeft size={14} />
+        </button>
 
-function PlayerStrip({
-  colorSide, captured, advantage, isActive,
-}: {
-  colorSide: 'white' | 'black';
-  captured: string[];
-  advantage: number;
-  isActive: boolean;
-}) {
-  return (
-    <div className={`player-strip${isActive ? ' active-turn' : ''}`}>
-      <div className={`player-color-dot ${colorSide}`} />
-      <span className="player-label">{colorSide === 'white' ? 'לבן' : 'שחור'}</span>
-      <div className="player-captured">
-        {captured.map((p, i) => (
-          <span key={i} style={{ opacity: 0.8 }}>{PIECE_SYMBOLS[p] ?? p}</span>
-        ))}
+        <div className="ticker-track" ref={tickerRef}>
+          {history.length === 0 ? (
+            <span className="ticker-empty">גרור כלי או לחץ עליו כדי להתחיל</span>
+          ) : (
+            history.map((entry, idx) => (
+              <React.Fragment key={idx}>
+                {/* Show move number label before each white move */}
+                {entry.color === 'w' && (
+                  <span className="t-num">{entry.moveNumber}.</span>
+                )}
+                <button
+                  data-active={currentIndex === idx}
+                  className={`t-chip${currentIndex === idx ? ' t-chip--active' : ''}`}
+                  onClick={() => goTo(idx)}
+                >
+                  {entry.san}
+                </button>
+              </React.Fragment>
+            ))
+          )}
+        </div>
+
+        <button className="nav-btn" onClick={() => goTo(currentIndex + 1)} disabled={currentIndex === history.length - 1} title="הבא">
+          <ChevronRight size={14} />
+        </button>
+        <button className="nav-btn" onClick={() => goTo(history.length - 1)} disabled={currentIndex === history.length - 1} title="אחרון">
+          <ChevronsRight size={14} />
+        </button>
+
+        {history.length > 0 && (
+          <button className="pgn-btn" onClick={() => copyWithFeedback(pgn, 'pgn')}>
+            {copied === 'pgn' ? <Check size={11} /> : <FileText size={11} />}
+            PGN
+          </button>
+        )}
       </div>
-      {advantage > 0 && <span className="player-advantage">+{advantage}</span>}
-    </div>
-  );
-}
 
-function MoveChip({ san, active, onClick }: { san: string; active: boolean; onClick: () => void }) {
-  return (
-    <button
-      data-active={active}
-      onClick={onClick}
-      className={`move-chip${active ? ' active' : ''}`}
-    >
-      {san}
-    </button>
-  );
-}
-
-function CapturedRow({
-  pieces = [], advantage, side,
-}: { pieces?: string[]; advantage: number; side: 'white' | 'black' }) {
-  if (!pieces || (pieces.length === 0 && advantage === 0)) return <div style={{ height: 20 }} />;
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 4, height: 20, overflow: 'hidden' }}>
-      <span style={{ fontSize: 14, lineHeight: 1 }}>
-        {pieces.map((p, i) => (
-          <span key={i} style={{ opacity: side === 'white' ? 0.9 : 0.75 }}>
-            {PIECE_SYMBOLS[p] ?? p}
-          </span>
-        ))}
-      </span>
-      {advantage > 0 && (
-        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--gold)' }}>+{advantage}</span>
-      )}
     </div>
   );
 }
