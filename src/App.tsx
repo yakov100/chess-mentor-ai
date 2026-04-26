@@ -807,9 +807,13 @@ tick();
             {/* Bookmarklet drag target — href set via ref to bypass React's javascript: sanitization */}
             <a
               ref={bookmarkletAnchorRef}
-              href="#"
               onClick={e => e.preventDefault()}
               draggable
+              onDragStart={e => {
+                e.dataTransfer.setData('text/uri-list', bookmarkletUrl);
+                e.dataTransfer.setData('text/plain', bookmarkletUrl);
+                e.dataTransfer.effectAllowed = 'copyLink';
+              }}
               className="flex items-center justify-center gap-1.5 w-full text-xs py-2 px-3 rounded-lg font-semibold mb-2 select-none"
               style={{
                 backgroundColor: '#16a34a',
