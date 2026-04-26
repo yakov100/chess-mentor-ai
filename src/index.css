@@ -239,8 +239,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  width: min(calc(100vh - 44px - 72px - 100px), calc(100vw - 240px - 32px));
-  max-width: 580px;
+  width: min(calc(100dvh - 44px - 72px - 140px), calc(100dvw - 256px - 32px));
+  max-width: 560px;
   padding: 4px 2px;
   border-bottom: 1px solid transparent;
   transition: border-color 200ms;
@@ -294,10 +294,12 @@
   font-family: var(--font-mono);
 }
 
-/* Board wrapper — constrains size based on available viewport */
+/* Board wrapper — constrains size based on available viewport.
+   Non-board elements in board-zone total ~130px:
+   padding (20) + player-bar×2 (56) + ctrl-row (30) + gaps (24) = 130 */
 .board-wrap {
-  width: min(calc(100dvh - 44px - 72px - 80px), calc(100dvw - 256px - 32px));
-  max-width: 580px;
+  width: min(calc(100dvh - 44px - 72px - 140px), calc(100dvw - 256px - 32px));
+  max-width: 560px;
   aspect-ratio: 1 / 1;
   border-radius: 4px;
   overflow: hidden;
@@ -319,8 +321,8 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  width: min(calc(100vh - 44px - 72px - 100px), calc(100vw - 240px - 32px));
-  max-width: 580px;
+  width: min(calc(100dvh - 44px - 72px - 140px), calc(100dvw - 256px - 32px));
+  max-width: 560px;
 }
 
 .status-pill {
