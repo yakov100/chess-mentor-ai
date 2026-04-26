@@ -125,6 +125,20 @@ function normalizeFen(fen: string): string {
   return fen.split(' ').slice(0, 2).join(' ');
 }
 
+function getInitialFenFromUrl(): string {
+  const url = new URL(window.location.href);
+  const fenFromQuery = url.searchParams.get('fen');
+  const fenFromHash = url.hash.startsWith('#fen=') ? decodeURIComponent(url.hash.slice(5)) : null;
+  const incoming = fenFromQuery || fenFromHash;
+  if (!incoming) return INITIAL_FEN;
+
+  try {
+    return new Chess(incoming).fen();
+  } catch {
+    return INITIAL_FEN;
+  }
+}
+
 // If incomingFen is reachable from fromFen via exactly one legal move, return
 // that move's from/to squares. Returns null otherwise.
 function findMoveForFen(fromFen: string, incomingFen: string): { from: string; to: string } | null {
@@ -147,13 +161,14 @@ function findMoveForFen(fromFen: string, incomingFen: string): { from: string; t
 // ─── App ─────────────────────────────────────────────────────────────────────
 
 export default function App() {
+  const initialFen = useMemo(getInitialFenFromUrl, []);
   const [dark, setDark] = useState(false);
   const [boardFlipped, setBoardFlipped] = useState(false);
 
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [currentIndex, setCurrentIndex] = useState(-1);
-  const [startFen, setStartFen] = useState(INITIAL_FEN);
-  const [currentFen, setCurrentFen] = useState(INITIAL_FEN);
+  const [startFen, setStartFen] = useState(initialFen);
+  const [currentFen, setCurrentFen] = useState(initialFen);
 
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
   const [legalMoveSquares, setLegalMoveSquares] = useState<SquareStyles>({});
@@ -173,6 +188,32 @@ export default function App() {
   // ── Name this window so the bookmarklet can target the existing tab ───────
   useEffect(() => {
     window.name = 'chess-mentor-ai';
+  }, []);
+
+  // ── Allow blocked-popup fallback links to open a captured Chess.com FEN ───
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const fenFromQuery = url.searchParams.get('fen');
+    const fenFromHash = url.hash.startsWith('#fen=') ? decodeURIComponent(url.hash.slice(5)) : null;
+    const incoming = fenFromQuery || fenFromHash;
+    if (!incoming) return;
+
+    try {
+      const game = new Chess(incoming);
+      const validated = game.fen();
+      setHistory([]);
+      setCurrentIndex(-1);
+      setStartFen(validated);
+      setCurrentFen(validated);
+      setHighlightSquares({});
+      setLegalMoveSquares({});
+      setSelectedSquare(null);
+      url.searchParams.delete('fen');
+      if (url.hash.startsWith('#fen=')) url.hash = '';
+      window.history.replaceState(null, '', url.toString());
+    } catch {
+      // Ignore invalid fallback URLs.
+    }
   }, []);
 
   // ── Sync dark mode ────────────────────────────────────────────────────────
@@ -235,13 +276,51 @@ export default function App() {
     //    extraction fails. Internal API state can be stale on some pages.
     const script = `(function(){
 var u=${JSON.stringify(targetUrl)};
-// Step 1: try to focus existing app window (no popup created, just a focus)
-var w=window.open(u,'chess-mentor-ai');
-// Step 2: if blocked, open as a new tab
-if(!w) w=window.open(u,'_blank');
-// Step 3: still blocked — tell the user
-if(!w){alert('Chess Mentor: אפשר פופ-אפים מ-chess.com ונסה שנית.');return;}
-var last=null;
+var w=null,last=null,timer=null;
+function connect(){
+  w=window.open(u,'chess-mentor-ai');
+  if(!w)w=window.open(u,'_blank');
+  return !!w;
+}
+function showBlocked(){
+  var old=document.getElementById('chess-mentor-connect');
+  if(old)old.remove();
+  var box=document.createElement('div');
+  box.id='chess-mentor-connect';
+  box.style.cssText='position:fixed;z-index:2147483647;right:16px;bottom:16px;max-width:320px;padding:14px;border-radius:12px;background:#111827;color:white;font:14px Arial,sans-serif;box-shadow:0 10px 30px rgba(0,0,0,.35);direction:rtl;text-align:right';
+  var title=document.createElement('div');
+  title.textContent='Chess Mentor מוכן לעקוב אחרי הלוח';
+  title.style.cssText='font-weight:700;margin-bottom:8px';
+  var msg=document.createElement('div');
+  msg.textContent='הדפדפן חסם פתיחה אוטומטית. לחץ כאן פעם אחת כדי לחבר את הטאב.';
+  msg.style.cssText='font-size:12px;line-height:1.4;margin-bottom:10px;color:#d1d5db';
+  var btn=document.createElement('button');
+  btn.type='button';
+  btn.textContent='התחבר ל-Chess Mentor';
+  btn.style.cssText='width:100%;padding:8px 10px;border:0;border-radius:8px;background:#16a34a;color:white;font-weight:700;cursor:pointer';
+  btn.onclick=function(){
+    if(connect()){box.remove();start();}
+    else msg.textContent='עדיין חסום. אפשר pop-ups מ-chess.com ואז לחץ שוב.';
+  };
+  var link=document.createElement('a');
+  link.textContent='או פתח את העמדה הנוכחית ללא מעקב חי';
+  link.target='chess-mentor-ai';
+  link.style.cssText='display:block;margin-top:8px;color:#93c5fd;text-decoration:underline;font-size:12px;text-align:center';
+  function refreshLink(){
+    var f=dom()||api();
+    link.href=f?u+(u.indexOf('?')===-1?'?':'&')+'fen='+encodeURIComponent(f):u;
+  }
+  refreshLink();
+  var linkTimer=setInterval(refreshLink,500);
+  var close=document.createElement('button');
+  close.type='button';
+  close.textContent='×';
+  close.setAttribute('aria-label','סגור');
+  close.style.cssText='position:absolute;left:8px;top:6px;border:0;background:transparent;color:#9ca3af;font-size:18px;cursor:pointer';
+  close.onclick=function(){clearInterval(linkTimer);box.remove();};
+  box.appendChild(close);box.appendChild(title);box.appendChild(msg);box.appendChild(btn);box.appendChild(link);
+  document.body.appendChild(box);
+}
 var PM={'wp':'P','wn':'N','wb':'B','wr':'R','wq':'Q','wk':'K','bp':'p','bn':'n','bb':'b','br':'r','bq':'q','bk':'k'};
 function board(){return document.querySelector('wc-chess-board')||document.querySelector('chess-board');}
 function api(){
@@ -326,8 +405,12 @@ function tick(){
   var f=dom()||api();
   if(f&&f!==last){last=f;send(f);}
 }
-setInterval(tick,500);
-tick();
+function start(){
+  if(timer)return;
+  tick();
+  timer=setInterval(tick,500);
+}
+if(connect())start();else showBlocked();
 })()`;
     return `javascript:${encodeURIComponent(script)}`;
   }, []);
@@ -802,6 +885,7 @@ tick();
               <li>1. השאר דף זה פתוח בטאב</li>
               <li>2. גרור את הכפתור הירוק לסרגל הסימניות</li>
               <li>3. פתח משחק ב-chess.com ולחץ על הסימנייה</li>
+              <li>4. אם מופיע כפתור חיבור ב-chess.com, לחץ עליו פעם אחת</li>
             </ol>
 
             {/* Bookmarklet drag target — href set via ref to bypass React's javascript: sanitization */}
