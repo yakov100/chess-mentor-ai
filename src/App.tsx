@@ -93,6 +93,17 @@ function normalizeFen(fen: string): string {
   return fen.split(' ').slice(0, 2).join(' ');
 }
 
+function isTrustedSyncOrigin(origin: string): boolean {
+  if (origin === window.location.origin) return true;
+
+  try {
+    const { hostname, protocol } = new URL(origin);
+    return protocol === 'https:' && (hostname === 'chess.com' || hostname === 'www.chess.com');
+  } catch {
+    return false;
+  }
+}
+
 function getInitialFenFromUrl(): string {
   const url = new URL(window.location.href);
   const fenFromQuery = url.searchParams.get('fen');
@@ -464,6 +475,7 @@ if(connect())start();else showBlocked();
 
     const handler = (e: MessageEvent) => {
       if (e.data?.type !== 'chess-sync' || typeof e.data.fen !== 'string') return;
+      if (!isTrustedSyncOrigin(e.origin)) return;
       applyIncomingFen(e.data.fen);
       relay?.postMessage(e.data);
     };
