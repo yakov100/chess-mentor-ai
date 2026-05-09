@@ -106,7 +106,7 @@ function getInitialFenFromUrl(): string {
   }
 }
 
-function findMoveForFen(fromFen: string, incomingFen: string): { from: string; to: string } | null {
+function findMoveForFen(fromFen: string, incomingFen: string): { from: string; to: string; promotion?: string } | null {
   const normalizedTarget = normalizeFen(incomingFen);
   try {
     const game = new Chess(fromFen);
@@ -114,7 +114,7 @@ function findMoveForFen(fromFen: string, incomingFen: string): { from: string; t
       const g = new Chess(fromFen);
       g.move(move);
       if (normalizeFen(g.fen()) === normalizedTarget) {
-        return { from: move.from, to: move.to };
+        return { from: move.from, to: move.to, promotion: move.promotion };
       }
     }
   } catch {
@@ -387,13 +387,13 @@ if(connect())start();else showBlocked();
 
   // ── Apply a chess.js move and update state ────────────────────────────────
   const applyMove = useCallback(
-    (game: Chess, from: string, to: string) => {
+    (game: Chess, from: string, to: string, promotion?: string) => {
       const pieceType = game.get(from as Parameters<typeof game.get>[0])?.type ?? '';
       const isPromotion =
         pieceType === 'p' &&
         ((game.turn() === 'w' && to[1] === '8') || (game.turn() === 'b' && to[1] === '1'));
 
-      const move = game.move({ from, to, promotion: isPromotion ? 'q' : undefined });
+      const move = game.move({ from, to, promotion: isPromotion ? (promotion ?? 'q') : undefined });
       if (!move) return false;
 
       const chess2 = new Chess(currentFen);
@@ -443,7 +443,7 @@ if(connect())start();else showBlocked();
       const found = findMoveForFen(currentFen, incoming);
       if (found) {
         const game = new Chess(currentFen);
-        applyMove(game, found.from, found.to);
+        applyMove(game, found.from, found.to, found.promotion);
         return;
       }
 
