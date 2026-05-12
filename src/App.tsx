@@ -93,11 +93,21 @@ function normalizeFen(fen: string): string {
   return fen.split(' ').slice(0, 2).join(' ');
 }
 
+function getFenFromUrl(url: URL): string | null {
+  const fenFromQuery = url.searchParams.get('fen');
+  if (fenFromQuery) return fenFromQuery;
+  if (!url.hash.startsWith('#fen=')) return null;
+
+  try {
+    return decodeURIComponent(url.hash.slice(5));
+  } catch {
+    return null;
+  }
+}
+
 function getInitialFenFromUrl(): string {
   const url = new URL(window.location.href);
-  const fenFromQuery = url.searchParams.get('fen');
-  const fenFromHash = url.hash.startsWith('#fen=') ? decodeURIComponent(url.hash.slice(5)) : null;
-  const incoming = fenFromQuery || fenFromHash;
+  const incoming = getFenFromUrl(url);
   if (!incoming) return INITIAL_FEN;
   try {
     return new Chess(incoming).fen();
@@ -165,9 +175,7 @@ export default function App() {
   // ── FEN from URL (popup fallback) ─────────────────────────────────────────
   useEffect(() => {
     const url = new URL(window.location.href);
-    const fenFromQuery = url.searchParams.get('fen');
-    const fenFromHash = url.hash.startsWith('#fen=') ? decodeURIComponent(url.hash.slice(5)) : null;
-    const incoming = fenFromQuery || fenFromHash;
+    const incoming = getFenFromUrl(url);
     if (!incoming) return;
     try {
       const game = new Chess(incoming);
