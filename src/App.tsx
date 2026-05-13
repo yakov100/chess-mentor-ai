@@ -29,6 +29,8 @@ interface HistoryEntry {
 }
 
 type SquareStyles = Record<string, React.CSSProperties>;
+type PromotionPiece = 'q' | 'r' | 'b' | 'n';
+type InferredMove = { from: string; to: string; promotion?: PromotionPiece };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -93,11 +95,25 @@ function normalizeFen(fen: string): string {
   return fen.split(' ').slice(0, 2).join(' ');
 }
 
+function isPromotionPiece(piece: string | undefined): piece is PromotionPiece {
+  return piece === 'q' || piece === 'r' || piece === 'b' || piece === 'n';
+}
+
+function getFenFromUrl(url: URL): string | null {
+  const fenFromQuery = url.searchParams.get('fen');
+  if (fenFromQuery) return fenFromQuery;
+  if (!url.hash.startsWith('#fen=')) return null;
+
+  try {
+    return decodeURIComponent(url.hash.slice(5));
+  } catch {
+    return null;
+  }
+}
+
 function getInitialFenFromUrl(): string {
   const url = new URL(window.location.href);
-  const fenFromQuery = url.searchParams.get('fen');
-  const fenFromHash = url.hash.startsWith('#fen=') ? decodeURIComponent(url.hash.slice(5)) : null;
-  const incoming = fenFromQuery || fenFromHash;
+  const incoming = getFenFromUrl(url);
   if (!incoming) return INITIAL_FEN;
   try {
     return new Chess(incoming).fen();
@@ -106,7 +122,7 @@ function getInitialFenFromUrl(): string {
   }
 }
 
-function findMoveForFen(fromFen: string, incomingFen: string): { from: string; to: string } | null {
+function findMoveForFen(fromFen: string, incomingFen: string): InferredMove | null {
   const normalizedTarget = normalizeFen(incomingFen);
   try {
     const game = new Chess(fromFen);
@@ -114,7 +130,11 @@ function findMoveForFen(fromFen: string, incomingFen: string): { from: string; t
       const g = new Chess(fromFen);
       g.move(move);
       if (normalizeFen(g.fen()) === normalizedTarget) {
-        return { from: move.from, to: move.to };
+        return {
+          from: move.from,
+          to: move.to,
+          promotion: isPromotionPiece(move.promotion) ? move.promotion : undefined,
+        };
       }
     }
   } catch {
@@ -165,9 +185,7 @@ export default function App() {
   // ── FEN from URL (popup fallback) ─────────────────────────────────────────
   useEffect(() => {
     const url = new URL(window.location.href);
-    const fenFromQuery = url.searchParams.get('fen');
-    const fenFromHash = url.hash.startsWith('#fen=') ? decodeURIComponent(url.hash.slice(5)) : null;
-    const incoming = fenFromQuery || fenFromHash;
+    const incoming = getFenFromUrl(url);
     if (!incoming) return;
     try {
       const game = new Chess(incoming);
@@ -387,13 +405,13 @@ if(connect())start();else showBlocked();
 
   // ── Apply a chess.js move and update state ────────────────────────────────
   const applyMove = useCallback(
-    (game: Chess, from: string, to: string) => {
+    (game: Chess, from: string, to: string, promotion?: PromotionPiece) => {
       const pieceType = game.get(from as Parameters<typeof game.get>[0])?.type ?? '';
       const isPromotion =
         pieceType === 'p' &&
         ((game.turn() === 'w' && to[1] === '8') || (game.turn() === 'b' && to[1] === '1'));
 
-      const move = game.move({ from, to, promotion: isPromotion ? 'q' : undefined });
+      const move = game.move({ from, to, promotion: isPromotion ? (promotion ?? 'q') : undefined });
       if (!move) return false;
 
       const chess2 = new Chess(currentFen);
@@ -443,7 +461,7 @@ if(connect())start();else showBlocked();
       const found = findMoveForFen(currentFen, incoming);
       if (found) {
         const game = new Chess(currentFen);
-        applyMove(game, found.from, found.to);
+        applyMove(game, found.from, found.to, found.promotion);
         return;
       }
 
